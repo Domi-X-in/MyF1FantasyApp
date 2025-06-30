@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -135,13 +135,13 @@ const STORAGE_KEYS = {
 };
 
 // Utility functions
-const getStoredData = <T>(key: string, defaultValue: T): T => {
+const getStoredData = (key: string, defaultValue: any): any => {
   if (typeof window === "undefined") return defaultValue;
   const stored = localStorage.getItem(key);
   return stored ? JSON.parse(stored) : defaultValue;
 };
 
-const setStoredData = <T>(key: string, data: T): void => {
+const setStoredData = (key: string, data: any): void => {
   if (typeof window === "undefined") return;
   localStorage.setItem(key, JSON.stringify(data));
 };
@@ -214,6 +214,9 @@ export default function F1FantasyApp() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedRaceId, setSelectedRaceId] = useState<string | null>(null);
   const [backfillPrediction, setBackfillPrediction] = useState<Positions>({ first: "", second: "", third: "" });
+  
+  // File input ref for CSV import
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // New race/result states
   const [newRace, setNewRace] = useState({ name: "", city: "", date: "" });
@@ -1188,7 +1191,7 @@ export default function F1FantasyApp() {
                           </div>
                           <div className="flex flex-row items-end gap-4 min-w-[180px]">
                             {race.results && ["first", "second", "third"].map((pos, idx) => {
-                              const code = race.results[pos];
+                              const code = race.results![pos as keyof Positions];
                               const driver = drivers.find(d => d.code === code);
                               const labels = ["1st", "2nd", "3rd"];
                               return (
@@ -1548,7 +1551,34 @@ export default function F1FantasyApp() {
         {adminTab === 'addResults' && (
           <Card className="bg-white border border-gray-200 shadow-sm">
             <CardContent className="p-6 space-y-4">
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Add Race Results</h3>
+              <div className="flex justify-between items-center">
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">Add Race Results</h3>
+                <div className="flex gap-2">
+                  <Button 
+                    onClick={exportResultsToCSV}
+                    variant="outline" 
+                    size="sm" 
+                    className="border-green-600 text-green-600 hover:bg-green-50"
+                  >
+                    📤 Export CSV
+                  </Button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv"
+                    onChange={importResultsFromCSV}
+                    className="hidden"
+                  />
+                  <Button 
+                    onClick={handleImportButtonClick}
+                    variant="outline" 
+                    size="sm" 
+                    className="border-blue-600 text-blue-600 hover:bg-blue-50"
+                  >
+                    📥 Import CSV
+                  </Button>
+                </div>
+              </div>
               <form className="space-y-3" onSubmit={e => { e.preventDefault(); addRaceResults(); }}>
                 <select value={selectedRaceForResults} onChange={e => setSelectedRaceForResults(e.target.value)} className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600">
                   <option value="">Select a race</option>
@@ -1880,12 +1910,12 @@ export default function F1FantasyApp() {
   );
 
   // Remove Race
-  const handleDeleteRace = (raceId) => {
+  const handleDeleteRace = (raceId: string) => {
     setRaces(prev => prev.filter(race => race.id !== raceId));
   };
 
   // Remove Results
-  const handleRemoveResults = (raceId) => {
+  const handleRemoveResults = (raceId: string) => {
     setRaces(prev => prev.map(race => {
       if (race.id === raceId) {
         // Remove results and mark as not completed
@@ -1895,6 +1925,133 @@ export default function F1FantasyApp() {
       return race;
     }));
     // Optionally, you may want to update user stars here if you want to revert star awards
+  };
+
+  // Export/Import functions for race results
+  const exportResultsToCSV = () => {
+    const completedRaces = races.filter(race => race.isCompleted && race.results);
+    
+    if (completedRaces.length === 0) {
+      alert("No completed races with results to export.");
+      return;
+    }
+
+    // Create CSV content
+    const csvHeaders = "Race ID,Race Name,City,Date,1st Place,2nd Place,3rd Place,Star Winners\n";
+    const csvRows = completedRaces.map(race => {
+      const starWinners = race.starWinners ? race.starWinners.join(';') : '';
+      return `${race.id},"${race.name}","${race.city}","${race.date}","${race.results?.first}","${race.results?.second}","${race.results?.third}","${starWinners}"`;
+    }).join('\n');
+    
+    const csvContent = csvHeaders + csvRows;
+    
+    // Create and download file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `f1_fantasy_results_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const importResultsFromCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      console.log("No file selected");
+      return;
+    }
+
+    console.log("File selected:", file.name, file.size, "bytes");
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      console.log("File content length:", text.length);
+      const lines = text.split('\n');
+      
+      if (lines.length < 2) {
+        alert("Invalid CSV file format.");
+        return;
+      }
+
+      // Skip header row and process data
+      const dataRows = lines.slice(1).filter(line => line.trim());
+      console.log("Data rows to process:", dataRows.length);
+      const importedRaces: Race[] = [];
+      const errors: string[] = [];
+
+      dataRows.forEach((line, index) => {
+        try {
+          // Parse CSV line (handle quoted values)
+          const values = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
+          const cleanValues = values.map(v => v.replace(/^"|"$/g, '')); // Remove quotes
+          
+          if (cleanValues.length < 7) {
+            errors.push(`Row ${index + 2}: Insufficient data`);
+            return;
+          }
+
+          const [raceId, raceName, city, date, first, second, third, starWinnersStr] = cleanValues;
+          
+          // Validate driver codes
+          const validDrivers = drivers.map(d => d.code);
+          if (!validDrivers.includes(first) || !validDrivers.includes(second) || !validDrivers.includes(third)) {
+            errors.push(`Row ${index + 2}: Invalid driver codes`);
+            return;
+          }
+
+          // Check for duplicate positions
+          if (first === second || first === third || second === third) {
+            errors.push(`Row ${index + 2}: Duplicate driver positions`);
+            return;
+          }
+
+          const starWinners = starWinnersStr ? starWinnersStr.split(';').filter(id => id.trim()) : [];
+          
+          const importedRace: Race = {
+            id: raceId,
+            name: raceName,
+            city: city,
+            date: date,
+            isCompleted: true,
+            results: { first, second, third },
+            predictions: {},
+            starWinners: starWinners.length > 0 ? starWinners : undefined
+          };
+
+          importedRaces.push(importedRace);
+          console.log("Imported race:", importedRace);
+        } catch (error) {
+          errors.push(`Row ${index + 2}: Parse error`);
+        }
+      });
+
+      if (errors.length > 0) {
+        console.log("Import errors:", errors);
+        alert(`Import completed with errors:\n${errors.join('\n')}`);
+      }
+
+      if (importedRaces.length > 0) {
+        // Merge with existing races, replacing any with same ID
+        const existingRaceIds = new Set(races.map(r => r.id));
+        const newRaces = races.filter(r => !importedRaces.some(ir => ir.id === r.id));
+        setRaces([...newRaces, ...importedRaces]);
+        console.log("Successfully imported races:", importedRaces.length);
+        alert(`Successfully imported ${importedRaces.length} race results.`);
+      }
+
+      // Reset file input
+      event.target.value = '';
+    };
+
+    reader.readAsText(file);
+  };
+
+  const handleImportButtonClick = () => {
+    fileInputRef.current?.click();
   };
 
   return (
