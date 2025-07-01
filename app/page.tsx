@@ -1,3 +1,5 @@
+'use client'
+
 import dynamic from 'next/dynamic'
 
 // Dynamically import the Supabase app with no SSR to prevent build-time errors
