@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { Trophy, Car, BookOpen, Crown, Star, LogIn, LogOut, History } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 // Driver data
 const drivers = [
@@ -234,6 +235,8 @@ export default function F1FantasyApp() {
 
   const tabKeys = ["fantasy", "ranking", "history", "rules", "admin"];
   const [tabPairs, setTabPairs] = useState<{ [key: string]: { driver: any; carImage: string } }>({});
+
+  const router = useRouter();
 
   // Shuffle and assign unique pairs on mount
   useEffect(() => {
@@ -866,16 +869,8 @@ export default function F1FantasyApp() {
 
   const renderFantasyTab = () => (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-xl font-bold text-gray-900">🚗 My Fantasy</h2>
-        {!isAdminLoggedIn && (
-          <Button onClick={() => setShowAdminLogin(true)} variant="outline" size="sm" className="border-red-600 text-red-600 hover:bg-red-50">
-            <LogIn className="w-4 h-4 mr-2" />
-            Admin
-          </Button>
-        )}
-      </div>
-
+      {/* Removed '🚗 My Fantasy' title and Admin login button */}
+      {/* Login/Register Form */}
       {!currentUser ? (
         <Card className="bg-white border border-gray-200 shadow-sm">
           <CardContent className="p-6">
@@ -974,9 +969,7 @@ export default function F1FantasyApp() {
                     } • {users.find(u => u.id === currentUser)?.stars} ⭐ • {users.find(u => u.id === currentUser)?.racesParticipated} races
                   </p>
                 </div>
-                <Button variant="outline" size="sm" onClick={logoutUser} className="border-red-600 text-red-600 hover:bg-red-50">
-                  Logout
-                </Button>
+                {/* Removed Logout button */}
               </div>
             </CardContent>
           </Card>
@@ -2061,7 +2054,14 @@ export default function F1FantasyApp() {
         <div className="flex items-center justify-center min-h-screen">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading F1 Punezolanos Fantasy...</p>
+            <div className="flex flex-col items-center space-y-4">
+              <img 
+                src="/Punezolanos.png" 
+                alt="Punezolanos" 
+                className="h-16 w-auto object-contain"
+              />
+              <p className="text-gray-600">Loading Fantasy League...</p>
+            </div>
           </div>
         </div>
       )}
@@ -2072,9 +2072,14 @@ export default function F1FantasyApp() {
           {/* Header */}
           <header className="bg-[#E10800] p-4 border-b border-red-800 shadow-lg">
             <div className="flex justify-between items-center">
-              <div className="flex items-center space-x-2">
-                <Crown className="w-6 h-6 text-white" />
-                <h1 className="text-xl font-bold text-white">F1 Punezolanos Fantasy</h1>
+              <div className="flex items-center justify-center w-full">
+                <img
+                  src="/Punezolanos.png"
+                  alt="Punezolanos"
+                  className="h-14 w-auto object-contain cursor-pointer"
+                  onClick={() => router.push("/drivers")}
+                  draggable={false}
+                />
               </div>
               {isAdminLoggedIn && (
                 <div className="flex items-center space-x-2">
