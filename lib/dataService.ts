@@ -273,7 +273,7 @@ export class DataService {
         if (updates.racesParticipated !== undefined) updateData.races_participated = updates.racesParticipated
         if (updates.password) updateData.password_hash = await hashPassword(updates.password)
 
-        const { error } = await supabase
+        const { error } = await getSupabase()
           .from('users')
           .update(updateData)
           .eq('id', userId)
@@ -304,7 +304,7 @@ export class DataService {
     if (this.isOnline) {
       try {
         // First delete related predictions
-        const { error: predictionsError } = await supabase
+        const { error: predictionsError } = await getSupabase()
           .from('predictions')
           .delete()
           .eq('user_id', userId)
@@ -312,7 +312,7 @@ export class DataService {
         if (predictionsError) throw predictionsError
 
         // Then delete the user
-        const { error: userError } = await supabase
+        const { error: userError } = await getSupabase()
           .from('users')
           .delete()
           .eq('id', userId)
@@ -339,7 +339,7 @@ export class DataService {
   async getUsers(): Promise<User[]> {
     if (this.isOnline) {
       try {
-        const { data, error } = await supabase
+        const { data, error } = await getSupabase()
           .from('users')
           .select('*')
           .order('stars', { ascending: false })
@@ -374,14 +374,14 @@ export class DataService {
     console.log('DataService: Getting races');
     if (this.isOnline) {
       try {
-        const { data: racesData, error: racesError } = await supabase
+        const { data: racesData, error: racesError } = await getSupabase()
           .from('races')
           .select('*')
           .order('date', { ascending: true })
 
         if (racesError) throw racesError
 
-        const { data: predictionsData, error: predictionsError } = await supabase
+        const { data: predictionsData, error: predictionsError } = await getSupabase()
           .from('predictions')
           .select('*')
 
@@ -440,7 +440,7 @@ export class DataService {
 
     if (this.isOnline) {
       try {
-        const { data, error } = await supabase
+        const { data, error } = await getSupabase()
           .from('races')
           .insert({
             name: raceData.name,
@@ -480,7 +480,7 @@ export class DataService {
       try {
         // First delete related predictions
         console.log('DataService: Deleting predictions for race', raceId);
-        const { error: predictionsError } = await supabase
+        const { error: predictionsError } = await getSupabase()
           .from('predictions')
           .delete()
           .eq('race_id', raceId)
@@ -490,7 +490,7 @@ export class DataService {
 
         // Then delete the race
         console.log('DataService: Deleting race', raceId);
-        const { error: raceError } = await supabase
+        const { error: raceError } = await getSupabase()
           .from('races')
           .delete()
           .eq('id', raceId)
@@ -521,7 +521,7 @@ export class DataService {
     if (this.isOnline) {
       try {
         // 1. Update race results as before
-        const { error: raceError } = await supabase
+        const { error: raceError } = await getSupabase()
           .from('races')
           .update({
             results,
@@ -531,7 +531,7 @@ export class DataService {
         if (raceError) throw raceError;
 
         // 2. Fetch all predictions for this race
-        const { data: predictionsData, error: predictionsError } = await supabase
+        const { data: predictionsData, error: predictionsError } = await getSupabase()
           .from('predictions')
           .select('*')
           .eq('race_id', raceId);
@@ -568,7 +568,7 @@ export class DataService {
         for (const userId in userScores) {
           const score = userScores[userId];
           // Fetch user
-          const { data: userData, error: userError } = await supabase
+          const { data: userData, error: userError } = await getSupabase()
             .from('users')
             .select('*')
             .eq('id', userId)
@@ -581,7 +581,7 @@ export class DataService {
           }
           const newRacesParticipated = (userData.races_participated || 0) + 1;
           // Update user
-          await supabase
+          await getSupabase()
             .from('users')
             .update({
               stars: newStars,
@@ -590,7 +590,7 @@ export class DataService {
             .eq('id', userId);
         }
         // 6. Update race with star_winners
-        await supabase
+        await getSupabase()
           .from('races')
           .update({
             star_winners: starWinnerIds
@@ -622,7 +622,7 @@ export class DataService {
   async removeRaceResults(raceId: string): Promise<void> {
     if (this.isOnline) {
       try {
-        const { error } = await supabase
+        const { error } = await getSupabase()
           .from('races')
           .update({
             results: null,
@@ -662,7 +662,7 @@ export class DataService {
       try {
         for (const race of races) {
           // Create the race first
-          const { data: raceData, error: raceError } = await supabase
+          const { data: raceData, error: raceError } = await getSupabase()
             .from('races')
             .insert({
               name: race.name,
@@ -714,7 +714,7 @@ export class DataService {
   async submitPrediction(userId: string, raceId: string, prediction: Positions): Promise<void> {
     if (this.isOnline) {
       try {
-        const { error } = await supabase
+        const { error } = await getSupabase()
           .from('predictions')
           .upsert({
             user_id: userId,
@@ -798,14 +798,14 @@ export class DataService {
   subscribeToChanges(callback: (changes: any) => void) {
     if (!this.isOnline) return
 
-    const racesSubscription = supabase
+    const racesSubscription = getSupabase()
       .channel('races_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'races' }, callback)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'predictions' }, callback)
       .subscribe()
 
     return () => {
-      supabase.removeChannel(racesSubscription)
+      getSupabase().removeChannel(racesSubscription)
     }
   }
 
