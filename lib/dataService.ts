@@ -2,6 +2,14 @@ import { supabase } from './supabase'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from './supabase'
 
+// Helper function to check if supabase is available
+const getSupabase = () => {
+  if (!supabase) {
+    throw new Error('Supabase client not initialized. Environment variables may be missing.')
+  }
+  return supabase
+}
+
 // Types
 export interface User {
   id: string
@@ -155,7 +163,7 @@ export class DataService {
     
     if (this.isOnline) {
       try {
-        const { data, error } = await supabase
+        const { data, error } = await getSupabase()
           .from('users')
           .insert({
             username: userData.username,
@@ -221,7 +229,7 @@ export class DataService {
 
     if (this.isOnline) {
       try {
-        const { data, error } = await supabase
+        const { data, error } = await getSupabase()
           .from('users')
           .select('*')
           .eq('username', username)
