@@ -71,7 +71,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=${key}
         console.log('\n4. Test the app:');
         console.log('   - Open http://localhost:3000');
         console.log('   - Create a new user account');
-        console.log('   - Test the migration feature in Admin panel');
+        
         
         console.log('\n🎉 Setup complete! Your F1 Fantasy app is now ready with Supabase integration.');
         

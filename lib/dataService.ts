@@ -809,51 +809,7 @@ export class DataService {
     }
   }
 
-  // Migration helpers
-  async migrateLocalData() {
-    const localUsers = getLocalData('users', [])
-    const localRaces = getLocalData('races', [])
 
-    console.log(`Migrating ${localUsers.length} users and ${localRaces.length} races`)
-
-    // Migrate users
-    for (const user of localUsers) {
-      try {
-        await this.createUser({
-          username: user.username,
-          name: user.name,
-          password: user.password
-        })
-      } catch (error) {
-        console.error(`Error migrating user ${user.username}:`, error)
-      }
-    }
-
-    // Migrate races
-    for (const race of localRaces) {
-      try {
-        const newRace = await this.createRace({
-          name: race.name,
-          city: race.city,
-          date: race.date
-        })
-
-        // Migrate predictions
-        for (const [userId, prediction] of Object.entries(race.predictions)) {
-          await this.submitPrediction(userId, newRace.id, prediction as Positions)
-        }
-
-        // Migrate results if race is completed
-        if (race.isCompleted && race.results) {
-          await this.updateRaceResults(newRace.id, race.results, race.starWinners)
-        }
-      } catch (error) {
-        console.error(`Error migrating race ${race.name}:`, error)
-      }
-    }
-
-    console.log('Migration completed')
-  }
 }
 
 // Export singleton instance

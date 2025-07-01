@@ -502,23 +502,7 @@ export default function F1FantasyApp() {
     setShowLoginForm(false);
   };
 
-  // Migration helper for existing users
-  const migrateExistingUser = (userId: string) => {
-    const user = users.find(u => u.id === userId);
-    if (user && !user.username) {
-      // Create a temporary username for legacy users
-      const tempUsername = `user_${user.id.slice(-6)}`;
-      const updatedUser = {
-        ...user,
-        username: tempUsername,
-        password: "changeme123" // Temporary password
-      };
-      
-      setUsers(prev => prev.map(u => u.id === userId ? updatedUser : u));
-      setCurrentUser(userId);
-      alert(`Welcome back! Your temporary login is:\nUsername: ${tempUsername}\nPassword: changeme123\n\nPlease create a new account with your preferred username.`);
-    }
-  };
+
 
   const handlePick = (driverCode: string) => {
     // Ensure we have a valid prediction object
@@ -895,15 +879,7 @@ export default function F1FantasyApp() {
               </Button>
             </div>
 
-            {/* Migration notice for existing users */}
-            {users.length > 0 && users.some(u => !u.username) && (
-              <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-                <p className="text-sm text-yellow-800">
-                  <strong>Existing Users:</strong> We've updated our login system. If you have an existing account, 
-                  you'll need to create a new account with a username and password.
-                </p>
-              </div>
-            )}
+
 
             {isLoginMode ? (
               // Login Form

@@ -5,10 +5,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
-import { Trophy, Car, BookOpen, Crown, Star, LogIn, LogOut, History, Cloud, Wifi, WifiOff, X } from "lucide-react";
+import { Trophy, Car, BookOpen, Crown, Star, LogIn, LogOut, History, Wifi, WifiOff, X } from "lucide-react";
 import { dataService, User, Race, Positions } from "@/lib/dataService";
-import { MigrationService, MigrationProgress } from "@/lib/migration";
-import MigrationStatus from "@/components/MigrationStatus";
 import { useRouter } from "next/navigation";
 
 // Driver data
@@ -152,13 +150,7 @@ export default function F1FantasyAppWithSupabase() {
   const [currentPrediction, setCurrentPrediction] = useState<Positions>({ first: "", second: "", third: "" });
   const [isEditingPrediction, setIsEditingPrediction] = useState(false);
   
-  // Migration states
-  const [showMigration, setShowMigration] = useState(false);
-  const [migrationProgress, setMigrationProgress] = useState<MigrationProgress>({
-    current: 0,
-    total: 0,
-    message: ""
-  });
+
   
   // Admin states
   const [adminUsername, setAdminUsername] = useState("");
@@ -588,19 +580,7 @@ export default function F1FantasyAppWithSupabase() {
     }
   };
 
-  // Migration
-  const startMigration = async () => {
-    const migrationService = new MigrationService(setMigrationProgress);
-    setShowMigration(true);
-    
-    try {
-      await migrationService.migrateAllData();
-      await loadData();
-    } catch (error) {
-      console.error('Migration failed:', error);
-      alert("Migration failed. Please check the console for details.");
-    }
-  };
+
 
   // Admin functions
   const loginAdmin = () => {
@@ -1899,19 +1879,7 @@ export default function F1FantasyAppWithSupabase() {
                       </Card>
                     )}
 
-                    {/* Migration Section */}
-                    <Card>
-                      <CardContent className="p-4">
-                        <h4 className="font-semibold mb-3">Data Migration</h4>
-                        <p className="text-sm text-gray-600 mb-3">
-                          Migrate existing local data to the cloud database for multi-device sync.
-                        </p>
-                        <Button onClick={startMigration} className="bg-blue-600 hover:bg-blue-700">
-                          <Cloud className="h-4 w-4 mr-2" />
-                          Migrate to Cloud
-                        </Button>
-                      </CardContent>
-                    </Card>
+
                   </div>
                 )}
 
