@@ -8,6 +8,7 @@ import { motion } from "framer-motion";
 import { Trophy, Car, BookOpen, Crown, Star, LogIn, LogOut, History, Wifi, WifiOff, X } from "lucide-react";
 import { dataService, User, Race, Positions } from "@/lib/dataService";
 import { useRouter } from "next/navigation";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 // Driver data
 const drivers = [
@@ -196,6 +197,12 @@ export default function F1FantasyAppWithSupabase() {
 
   // 1. Add state for recalculation loading
   const [isRecalculatingScores, setIsRecalculatingScores] = useState(false);
+
+  // New state variables for race-categorized leaderboard
+  const [leaderboardView, setLeaderboardView] = useState<'overall' | 'race-breakdown' | 'recent' | 'progress-chart'>('overall');
+  const [selectedRaceFilter, setSelectedRaceFilter] = useState<string>('all');
+  const [expandedRaces, setExpandedRaces] = useState<Set<string>>(new Set());
+  const [processedLeaderboardData, setProcessedLeaderboardData] = useState<any[]>([]);
 
   const router = useRouter();
 
@@ -468,6 +475,15 @@ export default function F1FantasyAppWithSupabase() {
       timeZone: 'UTC'
     };
     return date.toLocaleDateString('en-US', options);
+  };
+
+  const formatShortDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: '2-digit'
+    }).replace(/ /g, '-');
   };
 
   const getUpcomingRace = () => {
@@ -928,6 +944,14 @@ export default function F1FantasyAppWithSupabase() {
     }
   }, [currentUser, races]);
 
+  // Process leaderboard data when races or users change
+  useEffect(() => {
+    if (races.length > 0 && users.length > 0) {
+      const processedData = processRaceBreakdown();
+      setProcessedLeaderboardData(processedData);
+    }
+  }, [races, users]);
+
   // After: const [users, setUsers] = useState<User[]>([]);
   const filteredUsers = users.filter(
     user => user.username && user.username.trim().toLowerCase() !== "admin"
@@ -951,6 +975,259 @@ export default function F1FantasyAppWithSupabase() {
     } finally {
       setIsRecalculatingScores(false);
     }
+  };
+
+  // New helper functions for race-categorized leaderboard
+  const processRaceBreakdown = () => {
+    const completedRaces = getCompletedRaces();
+    const userRaceStats: { [userId: string]: any } = {};
+
+    // Initialize user stats
+    users.forEach(user => {
+      if (user.username && user.username.trim().toLowerCase() !== "admin") {
+        userRaceStats[user.id] = {
+          userId: user.id,
+          username: user.username,
+          name: user.name,
+          totalStars: user.stars,
+          racesParticipated: user.racesParticipated || 0,
+          raceBreakdown: {},
+          recentPerformance: []
+        };
+      }
+    });
+
+    // Process each race
+    completedRaces.forEach(race => {
+      if (!race.results) return;
+
+      const raceStats = {
+        raceId: race.id,
+        raceName: race.name,
+        raceCity: race.city,
+        raceDate: race.date,
+        participants: [] as any[]
+      };
+
+      // Process each user's prediction for this race
+      Object.entries(race.predictions).forEach(([userId, prediction]) => {
+        if (!userRaceStats[userId]) return;
+
+        const score = calculateScore(prediction, race.results!);
+        const isStarWinner = race.starWinners?.includes(userId) || false;
+        const starsEarned = isStarWinner ? 1 : 0;
+
+        const userRaceResult = {
+          userId,
+          username: userRaceStats[userId].username,
+          name: userRaceStats[userId].name,
+          prediction,
+          actualResults: race.results,
+          score,
+          starsEarned,
+          isStarWinner,
+                     accuracy: {
+             first: prediction.first === race.results!.first,
+             second: prediction.second === race.results!.second,
+             third: prediction.third === race.results!.third,
+             perfectMatch: prediction.first === race.results!.first && 
+                          prediction.second === race.results!.second && 
+                          prediction.third === race.results!.third
+           }
+        };
+
+        raceStats.participants.push(userRaceResult);
+
+        // Update user's race breakdown
+        userRaceStats[userId].raceBreakdown[race.id] = {
+          raceName: race.name,
+          raceCity: race.city,
+          raceDate: race.date,
+          starsEarned,
+          score,
+          isStarWinner,
+          prediction,
+          actualResults: race.results
+        };
+
+        // Add to recent performance (last 5 races)
+        userRaceStats[userId].recentPerformance.push({
+          raceId: race.id,
+          raceName: race.name,
+          starsEarned,
+          score,
+          date: race.date
+        });
+      });
+
+      // Sort participants by score (descending) for this race
+      raceStats.participants.sort((a, b) => b.score - a.score);
+    });
+
+    // Sort recent performance by date (newest first) and keep last 5
+    Object.values(userRaceStats).forEach(user => {
+      user.recentPerformance.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      user.recentPerformance = user.recentPerformance.slice(0, 5);
+    });
+
+    return Object.values(userRaceStats);
+  };
+
+  const sortLeaderboard = (data: any[], view: string, raceFilter?: string) => {
+    let sorted = [...data];
+
+    switch (view) {
+      case 'overall':
+        sorted.sort((a, b) => b.totalStars - a.totalStars || b.racesParticipated - a.racesParticipated);
+        break;
+      case 'recent':
+        sorted.sort((a, b) => {
+          const aRecentStars = a.recentPerformance.reduce((sum: number, race: any) => sum + race.starsEarned, 0);
+          const bRecentStars = b.recentPerformance.reduce((sum: number, race: any) => sum + race.starsEarned, 0);
+          return bRecentStars - aRecentStars;
+        });
+        break;
+      case 'race-breakdown':
+        if (raceFilter && raceFilter !== 'all') {
+          sorted.sort((a, b) => {
+            const aRaceStars = a.raceBreakdown[raceFilter]?.starsEarned || 0;
+            const bRaceStars = b.raceBreakdown[raceFilter]?.starsEarned || 0;
+            return bRaceStars - aRaceStars;
+          });
+        } else {
+          sorted.sort((a, b) => b.totalStars - a.totalStars);
+        }
+        break;
+    }
+
+    return sorted;
+  };
+
+  const toggleRaceExpansion = (raceId: string) => {
+    const newExpanded = new Set(expandedRaces);
+    if (newExpanded.has(raceId)) {
+      newExpanded.delete(raceId);
+    } else {
+      newExpanded.add(raceId);
+    }
+    setExpandedRaces(newExpanded);
+  };
+
+  const getPerformanceIndicator = (score: number) => {
+    if (score >= 30) return '🔥'; // Perfect match
+    if (score >= 20) return '⭐'; // High score
+    if (score >= 10) return '👍'; // Good score
+    return '📊'; // Low score
+  };
+
+  // Helper functions for progress chart
+  const generateProgressChartData = () => {
+    const completedRaces = getCompletedRaces()
+      .filter(race => race.results)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    if (completedRaces.length === 0) return [];
+
+    // First pass: calculate star wins (1) or no wins (0) for each user at each race
+    const userStarWins: { [userId: string]: { [raceId: string]: number } } = {};
+    const userCumulativeStars: { [userId: string]: { [raceId: string]: number } } = {};
+    
+    processedLeaderboardData.forEach(user => {
+      userStarWins[user.userId] = {};
+      userCumulativeStars[user.userId] = {};
+      let cumulativeStars = 0;
+      
+      completedRaces.forEach(race => {
+        const userRaceData = user.raceBreakdown[race.id];
+        const starWon = userRaceData?.isStarWinner ? 1 : 0;
+        userStarWins[user.userId][race.id] = starWon;
+        cumulativeStars += starWon;
+        userCumulativeStars[user.userId][race.id] = cumulativeStars;
+      });
+    });
+
+    // Second pass: build chart data with cumulative totals
+    const chartData = completedRaces.map(race => {
+      const raceData: any = {
+        race: race.city,
+        date: race.date,
+        raceName: race.name
+      };
+
+      // Add cumulative stars for each user
+      processedLeaderboardData.forEach(user => {
+        raceData[user.username] = userCumulativeStars[user.userId][race.id] || 0;
+      });
+
+      return raceData;
+    });
+
+    return chartData;
+  };
+
+  const generateStarWinsTableData = () => {
+    const completedRaces = getCompletedRaces()
+      .filter(race => race.results)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    if (completedRaces.length === 0) return { tableData: [], races: [] };
+
+    // Calculate star wins and cumulative totals for each user
+    const tableData = processedLeaderboardData.map(user => {
+      const userData: any = {
+        userId: user.userId,
+        username: user.username,
+        name: user.name
+      };
+
+      let cumulativeStars = 0;
+      let totalStarWins = 0;
+      completedRaces.forEach(race => {
+        const userRaceData = user.raceBreakdown[race.id];
+        const starWon = userRaceData?.isStarWinner ? 1 : 0;
+        userData[race.id] = starWon;
+        totalStarWins += starWon;
+        cumulativeStars += starWon;
+        userData[`${race.id}_cumulative`] = cumulativeStars;
+      });
+
+      // Use calculated total instead of user.totalStars
+      userData.totalStars = totalStarWins;
+
+      return userData;
+    });
+
+    return {
+      tableData: tableData.sort((a, b) => b.totalStars - a.totalStars), // Sort by total stars
+      races: completedRaces
+    };
+  };
+
+  const generateUserColors = () => {
+    const colors = [
+      '#E10800', // Red
+      '#0072B2', // Blue
+      '#009E73', // Green
+      '#F0E442', // Yellow
+      '#D55E00', // Orange
+      '#CC79A7', // Pink
+      '#56B4E9', // Sky Blue
+      '#000000', // Black
+      '#E69F00', // Gold
+      '#999999', // Gray
+      '#8B4513', // Brown
+      '#9400D3', // Purple
+      '#228B22', // Forest Green
+      '#FFD700', // Bright Yellow
+      '#00CED1', // Turquoise
+    ];
+
+    const userColors: { [username: string]: string } = {};
+    processedLeaderboardData.forEach((user, index) => {
+      userColors[user.username] = colors[index % colors.length];
+    });
+
+    return userColors;
   };
 
   if (!isClient) {
@@ -1380,42 +1657,379 @@ export default function F1FantasyAppWithSupabase() {
                     </Button>
                   )}
                 </div>
-                {users.length === 0 ? (
+
+                {/* View Tabs */}
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <button
+                    onClick={() => setLeaderboardView('overall')}
+                    className={`px-4 py-2 rounded font-medium border transition-colors duration-150 ${
+                      leaderboardView === 'overall'
+                        ? 'bg-[#E10800] text-white border-[#E10800] shadow'
+                        : 'bg-white text-[#E10800] border-[#E10800] hover:bg-red-50'
+                    }`}
+                  >
+                    Overall
+                  </button>
+                  <button
+                    onClick={() => setLeaderboardView('race-breakdown')}
+                    className={`px-4 py-2 rounded font-medium border transition-colors duration-150 ${
+                      leaderboardView === 'race-breakdown'
+                        ? 'bg-[#E10800] text-white border-[#E10800] shadow'
+                        : 'bg-white text-[#E10800] border-[#E10800] hover:bg-red-50'
+                    }`}
+                  >
+                    Race Breakdown
+                  </button>
+                  <button
+                    onClick={() => setLeaderboardView('recent')}
+                    className={`px-4 py-2 rounded font-medium border transition-colors duration-150 ${
+                      leaderboardView === 'recent'
+                        ? 'bg-[#E10800] text-white border-[#E10800] shadow'
+                        : 'bg-white text-[#E10800] border-[#E10800] hover:bg-red-50'
+                    }`}
+                  >
+                    Recent Performance
+                  </button>
+                  <button
+                    onClick={() => setLeaderboardView('progress-chart')}
+                    className={`px-4 py-2 rounded font-medium border transition-colors duration-150 ${
+                      leaderboardView === 'progress-chart'
+                        ? 'bg-[#E10800] text-white border-[#E10800] shadow'
+                        : 'bg-white text-[#E10800] border-[#E10800] hover:bg-red-50'
+                    }`}
+                  >
+                    Progress Chart
+                  </button>
+                </div>
+
+                {/* Race Filter (for race breakdown view) */}
+                {leaderboardView === 'race-breakdown' && (
+                  <Card className="bg-white border border-gray-200 shadow-sm">
+                    <CardContent className="p-4">
+                      <select
+                        value={selectedRaceFilter}
+                        onChange={(e) => setSelectedRaceFilter(e.target.value)}
+                        className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600"
+                      >
+                        <option value="all">All Races</option>
+                        {getCompletedRaces().map(race => (
+                          <option key={race.id} value={race.id}>
+                            {race.name} ({formatDate(race.date)})
+                          </option>
+                        ))}
+                      </select>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {processedLeaderboardData.length === 0 ? (
                   <Card className="bg-white border border-gray-200 shadow-sm">
                     <CardContent className="p-6 text-center">
                       <p className="text-gray-600">No users yet. Start by making predictions!</p>
                     </CardContent>
                   </Card>
                 ) : (
-                  <div className="space-y-3">
-                    {filteredUsers
-                      .sort((a, b) => b.stars - a.stars || (b.racesParticipated || 0) - (a.racesParticipated || 0))
-                      .map((user, index) => (
-                        <Card key={user.id} className="bg-white border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
-                          <CardContent className="p-4">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center space-x-3">
-                                <div className="w-8 h-8 bg-red-600 rounded-full flex items-center justify-center">
-                                  <span className="text-sm font-bold text-white">{index + 1}</span>
+                  <div className="space-y-4">
+                    {/* Overall Leaderboard View */}
+                    {leaderboardView === 'overall' && (
+                      <div className="space-y-3">
+                        {sortLeaderboard(processedLeaderboardData, 'overall').map((user, index) => (
+                          <Card key={user.userId} className="bg-white border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-3">
+                                  <div className="w-8 h-8 bg-red-600 rounded-full flex items-center justify-center">
+                                    <span className="text-sm font-bold text-white">{index + 1}</span>
+                                  </div>
+                                  <div>
+                                    <h3 className="font-semibold text-gray-900">{user.name}</h3>
+                                    <p className="text-sm text-gray-600">
+                                      @{user.username} • {user.racesParticipated} races • {user.totalStars} ⭐
+                                    </p>
+                                  </div>
                                 </div>
-                                <div>
-                                  <h3 className="font-semibold text-gray-900">{user.name}</h3>
-                                  <p className="text-sm text-gray-600">
-                                    @{user.username} • {user.racesParticipated || 0} races • {user.stars} ⭐
-                                  </p>
+                                <div className="flex items-center space-x-1">
+                                  {Array.from({ length: user.totalStars }, (_, i) => (
+                                    <Star key={i} className="w-5 h-5 text-red-600 fill-current" />
+                                  ))}
                                 </div>
                               </div>
-                              <div className="flex items-center space-x-1">
-                                {Array.from({ length: user.stars }, (_, i) => (
-                                  <Star key={i} className="w-5 h-5 text-red-600 fill-current" />
-                                ))}
-                              </div>
-                            </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Recent Performance View */}
+                    {leaderboardView === 'recent' && (
+                      <div className="space-y-3">
+                        {sortLeaderboard(processedLeaderboardData, 'recent').map((user, index) => {
+                          const recentStars = user.recentPerformance.reduce((sum: number, race: any) => sum + race.starsEarned, 0);
+                          const recentScore = user.recentPerformance.reduce((sum: number, race: any) => sum + race.score, 0);
+                          const avgScore = user.recentPerformance.length > 0 ? Math.round(recentScore / user.recentPerformance.length) : 0;
+                          
+                          return (
+                            <Card key={user.userId} className="bg-white border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                              <CardContent className="p-4">
+                                <div className="flex items-center justify-between mb-3">
+                                  <div className="flex items-center space-x-3">
+                                    <div className="w-8 h-8 bg-red-600 rounded-full flex items-center justify-center">
+                                      <span className="text-sm font-bold text-white">{index + 1}</span>
+                                    </div>
+                                    <div>
+                                      <h3 className="font-semibold text-gray-900">{user.name}</h3>
+                                      <p className="text-sm text-gray-600">
+                                        @{user.username} • {recentStars} ⭐ in last {user.recentPerformance.length} races
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-lg font-bold text-green-600">{avgScore} avg pts</div>
+                                    <div className="text-sm text-gray-600">{recentStars} ⭐</div>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-5 gap-2">
+                                  {user.recentPerformance.map((race: any, raceIndex: number) => (
+                                    <div key={race.raceId} className="text-center p-2 bg-gray-50 rounded">
+                                      <div className="text-xs font-semibold text-gray-700 truncate">{race.raceName.split(' ')[0]}</div>
+                                      <div className="text-lg font-bold text-green-600">{race.score}</div>
+                                      {race.starsEarned > 0 && <Star className="w-4 h-4 text-red-600 fill-current mx-auto" />}
+                                    </div>
+                                  ))}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Race Breakdown View */}
+                    {leaderboardView === 'race-breakdown' && (
+                      <div className="space-y-4">
+                        {getCompletedRaces().map(race => {
+                          const raceParticipants = processedLeaderboardData
+                            .filter(user => user.raceBreakdown[race.id])
+                            .sort((a, b) => {
+                              const aScore = a.raceBreakdown[race.id]?.score || 0;
+                              const bScore = b.raceBreakdown[race.id]?.score || 0;
+                              return bScore - aScore;
+                            });
+
+                          if (raceParticipants.length === 0) return null;
+
+                          const isExpanded = expandedRaces.has(race.id);
+                          const showRace = selectedRaceFilter === 'all' || selectedRaceFilter === race.id;
+
+                          if (!showRace) return null;
+
+                          return (
+                            <Card key={race.id} className="bg-white border border-gray-200 shadow-sm">
+                              <CardContent className="p-4">
+                                <div 
+                                  className="flex items-center justify-between cursor-pointer"
+                                  onClick={() => toggleRaceExpansion(race.id)}
+                                >
+                                  <div>
+                                    <h3 className="font-semibold text-gray-900">🏆 {race.name}</h3>
+                                    <p className="text-sm text-gray-600">{race.city} • {formatDate(race.date)}</p>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-sm text-gray-600">{raceParticipants.length} participants</span>
+                                    <button className="text-gray-400 hover:text-gray-600">
+                                      {isExpanded ? '▼' : '▶'}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {isExpanded && (
+                                  <div className="mt-4 space-y-2">
+                                    {raceParticipants.map((participant, index) => {
+                                      const raceData = participant.raceBreakdown[race.id];
+                                      return (
+                                        <div key={participant.userId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                          <div className="flex items-center space-x-3">
+                                            <div className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center">
+                                              <span className="text-xs font-bold text-white">{index + 1}</span>
+                                            </div>
+                                            <div>
+                                              <div className="font-semibold text-gray-900">{participant.name}</div>
+                                              <div className="text-sm text-gray-600">@{participant.username}</div>
+                                            </div>
+                                          </div>
+                                          <div className="flex items-center space-x-3">
+                                            <div className="text-right">
+                                              <div className="text-lg font-bold text-green-600">{raceData.score} pts</div>
+                                              <div className="text-sm text-gray-600">{getPerformanceIndicator(raceData.score)}</div>
+                                            </div>
+                                            {raceData.isStarWinner && (
+                                              <Star className="w-6 h-6 text-red-600 fill-current" />
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Progress Chart View */}
+                    {leaderboardView === 'progress-chart' && (
+                      <div className="space-y-4">
+                        <Card className="bg-white border border-gray-200 shadow-sm">
+                          <CardContent className="p-6">
+                            <h3 className="text-lg font-semibold mb-4 text-gray-900">📈 Stars Progress Over Time</h3>
+                            {(() => {
+                              const chartData = generateProgressChartData();
+                              const userColors = generateUserColors();
+                              
+                              if (chartData.length === 0) {
+                                return (
+                                  <div className="text-center py-8">
+                                    <p className="text-gray-600">No completed races with results yet.</p>
+                                    <p className="text-sm text-gray-500 mt-2">Complete some races to see the progress chart!</p>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <div className="space-y-4">
+                                  <div className="h-80 w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                      <LineChart
+                                        data={chartData}
+                                        margin={{
+                                          top: 20,
+                                          right: 30,
+                                          left: 20,
+                                          bottom: 20,
+                                        }}
+                                      >
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                        <XAxis 
+                                          dataKey="race" 
+                                          stroke="#666"
+                                          fontSize={12}
+                                          angle={-45}
+                                          textAnchor="end"
+                                          height={80}
+                                        />
+                                        <YAxis 
+                                          stroke="#666"
+                                          fontSize={12}
+                                          label={{ value: 'Cumulative Stars', angle: -90, position: 'insideLeft', fontSize: 12 }}
+                                        />
+                                        <Tooltip 
+                                          contentStyle={{
+                                            backgroundColor: 'white',
+                                            border: '1px solid #ccc',
+                                            borderRadius: '8px',
+                                            boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                                          }}
+                                          formatter={(value: any, name: string) => [
+                                            `${value} ⭐`, 
+                                            `@${name}`
+                                          ]}
+                                          labelFormatter={(label) => `Race: ${label}`}
+                                        />
+                                        <Legend 
+                                          verticalAlign="top" 
+                                          height={36}
+                                          wrapperStyle={{
+                                            paddingBottom: '10px'
+                                          }}
+                                          style={{
+                                            fontSize: '0.49em'
+                                          }}
+                                        />
+                                        {processedLeaderboardData.map((user) => (
+                                          <Line
+                                            key={user.username}
+                                            type="monotone"
+                                            dataKey={user.username}
+                                            stroke={userColors[user.username]}
+                                            strokeWidth={3}
+                                            dot={{ fill: userColors[user.username], strokeWidth: 2, r: 4 }}
+                                            activeDot={{ r: 6, stroke: userColors[user.username], strokeWidth: 2 }}
+                                            connectNulls={true}
+                                          />
+                                        ))}
+                                      </LineChart>
+                                    </ResponsiveContainer>
+                                  </div>
+                                  
+                                  {/* Star Wins Table */}
+                                  <div className="mt-10">
+                                    <h4 className="text-xl font-bold mb-4 text-gray-800">Star Wins by Race</h4>
+                                    {(() => {
+                                      const { tableData, races } = generateStarWinsTableData();
+                                      if (tableData.length === 0) {
+                                        return (
+                                          <div className="text-center py-4">
+                                            <p className="text-gray-600">No completed races with results yet.</p>
+                                          </div>
+                                        );
+                                      }
+                                      return (
+                                        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+                                          <table className="min-w-max text-sm">
+                                            <thead>
+                                              <tr>
+                                                <th className="px-3 py-2 text-left bg-gray-50 border-b-2 border-gray-200 font-semibold sticky left-0 z-10">User</th>
+                                                {races.map((race) => {
+                                                  const city = race.city;
+                                                  const date = formatShortDate(race.date);
+                                                  return (
+                                                    <th key={race.id} className="px-2 py-2 border-b-2 border-gray-200 text-center align-middle" style={{verticalAlign: 'middle', minWidth: 48}}>
+                                                      <div className="flex flex-col items-center justify-center h-full w-full" style={{height: 160, justifyContent: 'center', alignItems: 'center'}}>
+                                                        <span className="font-semibold text-xs text-gray-700 text-center" style={{writingMode: 'vertical-rl', transform: 'rotate(180deg)', fontSize: '0.75rem', letterSpacing: '0.5px', display: 'inline-block', whiteSpace: 'pre-line'}}>
+                                                          {city}
+                                                          {'\n'}
+                                                          <span style={{ fontSize: '0.525rem' }}>{date}</span>
+                                                        </span>
+                                                      </div>
+                                                    </th>
+                                                  );
+                                                })}
+                                                <th className="px-3 py-2 text-center bg-gray-50 border-b-2 border-gray-200 font-semibold">Total</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {tableData.map((user) => (
+                                                <tr key={user.userId} className="border-b hover:bg-gray-50">
+                                                  <td className="px-3 py-2 font-medium bg-gray-50 sticky left-0 z-10">{user.name}</td>
+                                                  {races.map((race) => {
+                                                    const star = user[race.id] || 0;
+                                                    return (
+                                                      <td key={race.id} className="px-2 py-2 text-center">
+                                                        <span className={`font-bold ${star ? 'text-green-600' : 'text-gray-300'}`}>{star ? 1 : ''}</span>
+                                                      </td>
+                                                    );
+                                                  })}
+                                                  <td className="px-3 py-2 text-center font-bold text-red-600">{user.totalStars}</td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </CardContent>
                         </Card>
-                      ))}
+                      </div>
+                    )}
                   </div>
                 )}
+
                 {/* Random Driver-Car Pair */}
                 <DriverCarPair pair={tabPairs["ranking"] || null} />
               </div>
