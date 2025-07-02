@@ -722,6 +722,8 @@ export class DataService {
             first: prediction.first,
             second: prediction.second,
             third: prediction.third
+          }, {
+            onConflict: 'user_id,race_id'
           })
 
         if (error) throw error

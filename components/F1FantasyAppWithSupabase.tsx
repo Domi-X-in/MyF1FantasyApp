@@ -180,6 +180,9 @@ export default function F1FantasyAppWithSupabase() {
   const [selectedRaceId, setSelectedRaceId] = useState<string | null>(null);
   const [backfillPrediction, setBackfillPrediction] = useState<Positions>({ first: "", second: "", third: "" });
   
+  // New state variables for unified Backfill UI
+  const [currentOperation, setCurrentOperation] = useState<'add' | 'edit' | null>(null);
+  
   // File input ref for CSV import
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -660,21 +663,81 @@ export default function F1FantasyAppWithSupabase() {
     }
   };
 
+  // Helper functions for unified Backfill UI
+  const validateBackfillForm = () => {
+    if (!selectedUserId) return "Please select a user.";
+    if (!selectedRaceId) return "Please select a race.";
+    if (!backfillPrediction.first || !backfillPrediction.second || !backfillPrediction.third) {
+      return "Please fill in all three positions.";
+    }
+    
+    // Check for duplicate drivers
+    const positions = [backfillPrediction.first, backfillPrediction.second, backfillPrediction.third];
+    const uniquePositions = new Set(positions);
+    if (uniquePositions.size !== 3) {
+      return "Each position must have a different driver.";
+    }
+    
+    return null;
+  };
+
+  const handleUserSelection = (userId: string) => {
+    setSelectedUserId(userId);
+    setSelectedRaceId(null);
+    setBackfillPrediction({ first: "", second: "", third: "" });
+    setCurrentOperation(null);
+  };
+
+  const handleRaceSelection = (raceId: string) => {
+    setSelectedRaceId(raceId);
+    
+    // Check if user has existing prediction for this race
+    const existingPrediction = races.find(r => r.id === raceId)?.predictions[selectedUserId!];
+    
+    if (existingPrediction) {
+      // Edit mode: populate with existing values
+      setBackfillPrediction({
+        first: existingPrediction.first,
+        second: existingPrediction.second,
+        third: existingPrediction.third
+      });
+      setCurrentOperation('edit');
+    } else {
+      // Add mode: clear form
+      setBackfillPrediction({ first: "", second: "", third: "" });
+      setCurrentOperation('add');
+    }
+  };
+
+  const resetBackfillForm = () => {
+    setSelectedUserId(null);
+    setSelectedRaceId(null);
+    setBackfillPrediction({ first: "", second: "", third: "" });
+    setCurrentOperation(null);
+  };
+
   const handleBackfillPrediction = async () => {
-    if (!selectedUserId || !selectedRaceId || !backfillPrediction.first || !backfillPrediction.second || !backfillPrediction.third) {
-      alert("Please select user, race, and all positions.");
+    const validationError = validateBackfillForm();
+    if (validationError) {
+      alert(validationError);
       return;
     }
     
     try {
-      await dataService.instance.submitPrediction(selectedUserId, selectedRaceId, backfillPrediction);
-      setBackfillPrediction({ first: "", second: "", third: "" });
-      setSelectedRaceId(null);
-      setSelectedUserId(null);
+      await dataService.instance.submitPrediction(selectedUserId!, selectedRaceId!, backfillPrediction);
+      
+      // Show success message with operation type
+      const operation = currentOperation === 'edit' ? 'updated' : 'added';
+      alert(`Prediction ${operation} successfully!`);
+      
+      // Reset form
+      resetBackfillForm();
+      
+      // Reload data to update the race list
       await loadData();
     } catch (error) {
-      console.error('Error backfilling prediction:', error);
-      alert("Error backfilling prediction. Please try again.");
+      console.error('Error handling prediction:', error);
+      alert("Error saving prediction. Please try again.");
     }
   };
 
@@ -1846,17 +1909,43 @@ export default function F1FantasyAppWithSupabase() {
                       <Card className="bg-white border border-gray-200 shadow-sm">
                         <CardContent className="p-6 space-y-4">
                           <h3 className="text-lg font-semibold text-gray-900 mb-2">Backfill Predictions for Users</h3>
+                          
+                          {/* Operation Status Indicator */}
+                          {currentOperation && (
+                            <div className={`text-sm font-medium p-2 rounded-md ${
+                              currentOperation === 'edit' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-green-50 text-green-700 border border-green-200'
+                            }`}>
+                              {currentOperation === 'edit' ? '✏️ Editing existing prediction' : '➕ Adding new prediction'}
+                            </div>
+                          )}
+                          
                           <form className="space-y-3" onSubmit={e => { e.preventDefault(); handleBackfillPrediction(); }}>
-                            <select className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600" value={selectedUserId || ""} onChange={e => setSelectedUserId(e.target.value)}>
+                            <select 
+                              className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600" 
+                              value={selectedUserId || ""} 
+                              onChange={e => handleUserSelection(e.target.value)}
+                            >
                               <option value="">Select User</option>
                               {users.map(u => <option key={u.id} value={u.id}>{u.username} ({u.name})</option>)}
                             </select>
-                            <select className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600" value={selectedRaceId || ""} onChange={e => setSelectedRaceId(e.target.value)}>
+                            
+                            <select 
+                              className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600" 
+                              value={selectedRaceId || ""} 
+                              onChange={e => handleRaceSelection(e.target.value)}
+                            >
                               <option value="">Select Race</option>
-                              {races.filter(r => r.isCompleted && selectedUserId && !r.predictions[selectedUserId]).map(r => (
-                                <option key={r.id} value={r.id}>{r.name} ({formatDate(r.date)})</option>
-                              ))}
+                              {races.filter(r => r.isCompleted && selectedUserId).map(r => {
+                                const hasPrediction = r.predictions[selectedUserId!];
+                                const status = hasPrediction ? "✏️ Edit" : "➕ Add";
+                                return (
+                                  <option key={r.id} value={r.id}>
+                                    {status} - {r.name} ({formatDate(r.date)})
+                                  </option>
+                                );
+                              })}
                             </select>
+                            
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                               <select value={backfillPrediction.first} onChange={e => setBackfillPrediction(p => ({ ...p, first: e.target.value }))} className="p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600">
                                 <option value="">1st Place</option>
@@ -1871,8 +1960,21 @@ export default function F1FantasyAppWithSupabase() {
                                 {drivers.map(driver => <option key={driver.code} value={driver.code}>{driver.name}</option>)}
                               </select>
                             </div>
+                            
                             <div className="flex gap-2">
-                              <Button type="submit" className="flex-1 bg-[#E10800] text-white hover:bg-red-800 font-medium">Save</Button>
+                              <Button type="submit" className="flex-1 bg-[#E10800] text-white hover:bg-red-800 font-medium">
+                                {currentOperation === 'edit' ? 'Update Prediction' : 'Save Prediction'}
+                              </Button>
+                              {(selectedUserId || selectedRaceId) && (
+                                <Button 
+                                  type="button" 
+                                  variant="outline" 
+                                  className="px-4 border-gray-300 text-gray-700 hover:bg-gray-50"
+                                  onClick={resetBackfillForm}
+                                >
+                                  Reset
+                                </Button>
+                              )}
                             </div>
                           </form>
                         </CardContent>
