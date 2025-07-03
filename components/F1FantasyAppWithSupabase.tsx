@@ -147,6 +147,16 @@ export default function F1FantasyAppWithSupabase() {
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [showLoginForm, setShowLoginForm] = useState(false);
   
+  // Profile editing states
+  const [showProfileEdit, setShowProfileEdit] = useState(false);
+  const [profileEditData, setProfileEditData] = useState({
+    name: "",
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: ""
+  });
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+  
   // Prediction states
   const [currentPrediction, setCurrentPrediction] = useState<Positions>({ first: "", second: "", third: "" });
   const [isEditingPrediction, setIsEditingPrediction] = useState(false);
@@ -451,6 +461,105 @@ export default function F1FantasyAppWithSupabase() {
     setShowLoginForm(false);
     // Clear admin status when user logs out
     setIsAdminLoggedIn(false);
+  };
+
+  // Profile editing functions
+  const openProfileEdit = () => {
+    if (currentUser) {
+      setProfileEditData({
+        name: currentUser.name,
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: ""
+      });
+      setShowProfileEdit(true);
+    }
+  };
+
+  const closeProfileEdit = () => {
+    setShowProfileEdit(false);
+    setProfileEditData({
+      name: "",
+      currentPassword: "",
+      newPassword: "",
+      confirmPassword: ""
+    });
+  };
+
+  const updateUserProfile = async () => {
+    if (!currentUser) return;
+
+    // Validation
+    if (!profileEditData.name.trim()) {
+      alert("Display name cannot be empty!");
+      return;
+    }
+
+    if (!profileEditData.currentPassword.trim()) {
+      alert("Please enter your current password to verify changes!");
+      return;
+    }
+
+    // Verify current password
+    const isCurrentPasswordValid = await dataService.instance.loginUser(
+      currentUser.username, 
+      profileEditData.currentPassword
+    );
+    
+    if (!isCurrentPasswordValid) {
+      alert("Current password is incorrect!");
+      return;
+    }
+
+    // Check if new password is provided
+    if (profileEditData.newPassword.trim()) {
+      if (profileEditData.newPassword !== profileEditData.confirmPassword) {
+        alert("New password and confirm password do not match!");
+        return;
+      }
+      
+      if (profileEditData.newPassword.length < 3) {
+        alert("New password must be at least 3 characters long!");
+        return;
+      }
+    }
+
+    try {
+      setIsUpdatingProfile(true);
+      
+      // Prepare update data
+      const updateData: any = {
+        name: profileEditData.name.trim()
+      };
+      
+      // Only update password if new password is provided
+      if (profileEditData.newPassword.trim()) {
+        updateData.password = profileEditData.newPassword.trim();
+      }
+
+      // Update user
+      await dataService.instance.updateUser(currentUser.id, updateData);
+      
+      // Update current user state
+      const updatedUser = {
+        ...currentUser,
+        name: updateData.name,
+        password: updateData.password || currentUser.password
+      };
+      setCurrentUser(updatedUser);
+      
+      // Close form and show success message
+      closeProfileEdit();
+      alert("Profile updated successfully!");
+      
+      // Reload data to ensure consistency
+      await loadData();
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      alert("Error updating profile. Please try again.");
+    } finally {
+      setIsUpdatingProfile(false);
+    }
   };
 
   // Helper functions
@@ -982,15 +1091,15 @@ export default function F1FantasyAppWithSupabase() {
     const completedRaces = getCompletedRaces();
     const userRaceStats: { [userId: string]: any } = {};
 
-    // Initialize user stats
+    // Initialize user stats with calculated totals instead of database values
     users.forEach(user => {
       if (user.username && user.username.trim().toLowerCase() !== "admin") {
         userRaceStats[user.id] = {
           userId: user.id,
           username: user.username,
           name: user.name,
-          totalStars: user.stars,
-          racesParticipated: user.racesParticipated || 0,
+          totalStars: 0, // Will be calculated from actual race data
+          racesParticipated: 0, // Will be calculated from actual race data
           raceBreakdown: {},
           recentPerformance: []
         };
@@ -1026,14 +1135,14 @@ export default function F1FantasyAppWithSupabase() {
           score,
           starsEarned,
           isStarWinner,
-                     accuracy: {
-             first: prediction.first === race.results!.first,
-             second: prediction.second === race.results!.second,
-             third: prediction.third === race.results!.third,
-             perfectMatch: prediction.first === race.results!.first && 
-                          prediction.second === race.results!.second && 
-                          prediction.third === race.results!.third
-           }
+          accuracy: {
+            first: prediction.first === race.results!.first,
+            second: prediction.second === race.results!.second,
+            third: prediction.third === race.results!.third,
+            perfectMatch: prediction.first === race.results!.first && 
+                         prediction.second === race.results!.second && 
+                         prediction.third === race.results!.third
+          }
         };
 
         raceStats.participants.push(userRaceResult);
@@ -1058,6 +1167,10 @@ export default function F1FantasyAppWithSupabase() {
           score,
           date: race.date
         });
+
+        // Update calculated totals
+        userRaceStats[userId].totalStars += starsEarned;
+        userRaceStats[userId].racesParticipated += 1;
       });
 
       // Sort participants by score (descending) for this race
@@ -1366,9 +1479,160 @@ export default function F1FantasyAppWithSupabase() {
                               @{currentUser.username} • {currentUser.stars} ⭐ • {currentUser.racesParticipated || 0} races
                             </p>
                           </div>
+                          <div className="flex gap-2">
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              onClick={openProfileEdit}
+                              className="border-red-600 text-red-600 hover:bg-red-50"
+                            >
+                              Edit Profile
+                            </Button>
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              onClick={logoutUser}
+                              className="border-gray-600 text-gray-600 hover:bg-gray-50"
+                            >
+                              <LogOut className="w-4 h-4 mr-1" />
+                              Logout
+                            </Button>
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
+
+                    {/* Profile Edit Modal */}
+                    {showProfileEdit && (
+                      <Card className="bg-white border border-gray-200 shadow-sm">
+                        <CardContent className="p-6">
+                          <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-semibold text-gray-900">Edit Profile</h3>
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              onClick={closeProfileEdit}
+                              className="border-gray-300 text-gray-600 hover:bg-gray-50"
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                          
+                          <div className="space-y-4">
+                            {/* Username (read-only) */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Username
+                              </label>
+                              <Input
+                                value={currentUser.username}
+                                disabled
+                                className="text-gray-500 bg-gray-50 border-gray-300"
+                              />
+                              <p className="text-xs text-gray-500 mt-1">
+                                Username cannot be changed for security reasons
+                              </p>
+                            </div>
+
+                            {/* Display Name */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Display Name *
+                              </label>
+                              <Input
+                                value={profileEditData.name}
+                                onChange={(e) => setProfileEditData(prev => ({ ...prev, name: e.target.value }))}
+                                placeholder="Your display name"
+                                className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                              />
+                            </div>
+
+                            {/* Current Password */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Current Password *
+                              </label>
+                              <Input
+                                type="password"
+                                value={profileEditData.currentPassword}
+                                onChange={(e) => setProfileEditData(prev => ({ ...prev, currentPassword: e.target.value }))}
+                                placeholder="Enter your current password"
+                                className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                              />
+                              <p className="text-xs text-gray-500 mt-1">
+                                Required to verify your identity
+                              </p>
+                            </div>
+
+                            {/* New Password (optional) */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                New Password (optional)
+                              </label>
+                              <Input
+                                type="password"
+                                value={profileEditData.newPassword}
+                                onChange={(e) => setProfileEditData(prev => ({ ...prev, newPassword: e.target.value }))}
+                                placeholder="Leave blank to keep current password"
+                                className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                              />
+                            </div>
+
+                            {/* Confirm New Password */}
+                            {profileEditData.newPassword && (
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  Confirm New Password *
+                                </label>
+                                <Input
+                                  type="password"
+                                  value={profileEditData.confirmPassword}
+                                  onChange={(e) => setProfileEditData(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                                  placeholder="Confirm your new password"
+                                  className={`text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600 ${
+                                    profileEditData.newPassword && profileEditData.confirmPassword && 
+                                    profileEditData.newPassword !== profileEditData.confirmPassword 
+                                      ? 'border-red-500' : ''
+                                  }`}
+                                />
+                                {profileEditData.newPassword && profileEditData.confirmPassword && 
+                                 profileEditData.newPassword !== profileEditData.confirmPassword && (
+                                  <p className="text-xs text-red-500 mt-1">
+                                    Passwords do not match
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Action Buttons */}
+                            <div className="flex gap-2 pt-2">
+                              <Button 
+                                onClick={updateUserProfile}
+                                disabled={isUpdatingProfile}
+                                className="flex-1 bg-red-600 hover:bg-red-700 text-white disabled:bg-gray-300 disabled:text-gray-500"
+                              >
+                                {isUpdatingProfile ? (
+                                  <>
+                                    <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></span>
+                                    Updating...
+                                  </>
+                                ) : (
+                                  'Update Profile'
+                                )}
+                              </Button>
+                              <Button 
+                                variant="outline"
+                                onClick={closeProfileEdit}
+                                disabled={isUpdatingProfile}
+                                className="flex-1 border-gray-300 text-gray-700 hover:bg-gray-50"
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
 
                     {/* Upcoming Race */}
                     {(() => {
