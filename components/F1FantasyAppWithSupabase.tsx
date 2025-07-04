@@ -149,6 +149,88 @@ const DriverCarPair = ({ pair }: { pair: { driver: any; carImage: string } | nul
   );
 };
 
+// Countdown Clock Component
+const CountdownClock = ({ raceDate, onTimeExpired }: { raceDate: string; onTimeExpired?: (expired: boolean) => void }) => {
+  const [timeLeft, setTimeLeft] = useState<{
+    days: number;
+    hours: number;
+    minutes: number;
+    seconds: number;
+    isExpired: boolean;
+  }>({ days: 0, hours: 0, minutes: 0, seconds: 0, isExpired: false });
+
+  useEffect(() => {
+    const calculateTimeLeft = () => {
+      const raceDateTime = new Date(raceDate + 'T00:00:00').getTime(); // Set to start of race day
+      const now = new Date().getTime();
+      const difference = raceDateTime - now;
+
+      if (difference > 0) {
+        const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((difference % (1000 * 60)) / 1000);
+
+        setTimeLeft({ days, hours, minutes, seconds, isExpired: false });
+        onTimeExpired?.(false);
+      } else {
+        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0, isExpired: true });
+        onTimeExpired?.(true);
+      }
+    };
+
+    // Calculate immediately
+    calculateTimeLeft();
+
+    // Update every second
+    const timer = setInterval(calculateTimeLeft, 1000);
+
+    return () => clearInterval(timer);
+  }, [raceDate]);
+
+  if (timeLeft.isExpired) {
+    return (
+      <div className="bg-red-100 border border-red-300 rounded-lg p-3 mb-4">
+        <div className="flex items-center justify-center space-x-2">
+          <span className="text-red-600 font-bold">⏰</span>
+          <span className="text-red-700 font-semibold">Race Day!</span>
+          <span className="text-red-600 font-bold">⏰</span>
+        </div>
+        <p className="text-red-600 text-sm text-center mt-1">Predictions are now locked</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+      <div className="text-center mb-2">
+        <span className="text-blue-700 font-semibold">⏰ Time to Submit Predictions</span>
+      </div>
+      <div className="grid grid-cols-4 gap-2 text-center">
+        <div className="bg-white rounded-lg p-2 border border-blue-200">
+          <div className="text-lg font-bold text-blue-600">{timeLeft.days}</div>
+          <div className="text-xs text-blue-500">Days</div>
+        </div>
+        <div className="bg-white rounded-lg p-2 border border-blue-200">
+          <div className="text-lg font-bold text-blue-600">{timeLeft.hours.toString().padStart(2, '0')}</div>
+          <div className="text-xs text-blue-500">Hours</div>
+        </div>
+        <div className="bg-white rounded-lg p-2 border border-blue-200">
+          <div className="text-lg font-bold text-blue-600">{timeLeft.minutes.toString().padStart(2, '0')}</div>
+          <div className="text-xs text-blue-500">Minutes</div>
+        </div>
+        <div className="bg-white rounded-lg p-2 border border-blue-200">
+          <div className="text-lg font-bold text-blue-600">{timeLeft.seconds.toString().padStart(2, '0')}</div>
+          <div className="text-xs text-blue-500">Seconds</div>
+        </div>
+      </div>
+      <p className="text-blue-600 text-xs text-center mt-2">
+        Submit your predictions before race day to participate!
+      </p>
+    </div>
+  );
+};
+
 export default function F1FantasyAppWithSupabase() {
   // State
   const [activeTab, setActiveTab] = useState<"ranking" | "fantasy" | "history" | "rules" | "admin">("fantasy");
@@ -185,6 +267,7 @@ export default function F1FantasyAppWithSupabase() {
   // Prediction states
   const [currentPrediction, setCurrentPrediction] = useState<Positions>({ first: "", second: "", third: "" });
   const [isEditingPrediction, setIsEditingPrediction] = useState(false);
+  const [isPredictionTimeExpired, setIsPredictionTimeExpired] = useState(false);
   
 
   
@@ -1735,6 +1818,25 @@ export default function F1FantasyAppWithSupabase() {
                             <p className="text-sm text-gray-600 mb-4">
                               {upcomingRace.city} • {formatDate(upcomingRace.date)}
                             </p>
+                            
+                            {/* Countdown Clock */}
+                            <CountdownClock 
+                              raceDate={upcomingRace.date} 
+                              onTimeExpired={setIsPredictionTimeExpired}
+                            />
+
+                            {/* Warning when predictions are locked */}
+                            {isPredictionTimeExpired && (
+                              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                                <div className="flex items-center space-x-2">
+                                  <span className="text-red-600">⚠️</span>
+                                  <span className="text-red-700 font-semibold">Predictions are now locked!</span>
+                                </div>
+                                <p className="text-red-600 text-sm mt-1">
+                                  The race is starting soon. You can no longer submit or edit predictions.
+                                </p>
+                              </div>
+                            )}
 
                             {hasStoredPrediction && !isInEditMode ? (
                               <div className="space-y-3">
@@ -1747,9 +1849,10 @@ export default function F1FantasyAppWithSupabase() {
                                       setCurrentPrediction(storedPrediction);
                                       setIsEditingPrediction(true);
                                     }}
-                                    className="border-red-600 text-red-600 hover:bg-red-50"
+                                    disabled={isPredictionTimeExpired}
+                                    className={`border-red-600 text-red-600 hover:bg-red-50 ${isPredictionTimeExpired ? 'opacity-50 cursor-not-allowed' : ''}`}
                                   >
-                                    Edit Prediction
+                                    {isPredictionTimeExpired ? "Predictions Locked" : "Edit Prediction"}
                                   </Button>
                                 </div>
                                 <div className="grid grid-cols-3 gap-3">
@@ -1805,7 +1908,7 @@ export default function F1FantasyAppWithSupabase() {
                                     </Button>
                                   )}
                                 </div>
-                                <div className="grid grid-cols-1 gap-3 max-h-60 overflow-y-auto">
+                                <div className={`grid grid-cols-1 gap-3 max-h-60 overflow-y-auto ${isPredictionTimeExpired ? 'pointer-events-none opacity-50' : ''}`}>
                                   {drivers.map((driver) => {
                                     // Check if driver is selected and get their position
                                     const isSelected = currentPrediction && (
@@ -1822,17 +1925,21 @@ export default function F1FantasyAppWithSupabase() {
                                     return (
                                       <div
                                         key={driver.code}
-                                        className={`flex items-center space-x-3 p-3 rounded-lg cursor-pointer transition-all border ${
-                                          isSelected
-                                            ? "border-red-600 bg-red-50"
-                                            : "border-gray-200 hover:border-gray-300"
+                                        className={`flex items-center space-x-3 p-3 rounded-lg transition-all border ${
+                                          isPredictionTimeExpired 
+                                            ? "border-gray-300 bg-gray-100 cursor-not-allowed"
+                                            : isSelected
+                                            ? "border-red-600 bg-red-50 cursor-pointer"
+                                            : "border-gray-200 hover:border-gray-300 cursor-pointer"
                                         }`}
                                         onClick={(e) => {
+                                          if (isPredictionTimeExpired) return;
                                           e.preventDefault();
                                           e.stopPropagation();
                                           handlePick(driver.code);
                                         }}
                                         onMouseDown={(e) => {
+                                          if (isPredictionTimeExpired) return;
                                           e.preventDefault();
                                         }}
                                       >
@@ -1865,10 +1972,10 @@ export default function F1FantasyAppWithSupabase() {
                                 <div className="flex gap-2">
                                   <Button 
                                     onClick={submitPrediction}
-                                    disabled={!currentPrediction || !currentPrediction.first || !currentPrediction.second || !currentPrediction.third}
+                                    disabled={!currentPrediction || !currentPrediction.first || !currentPrediction.second || !currentPrediction.third || isPredictionTimeExpired}
                                     className="flex-1 bg-red-600 hover:bg-red-700 text-white disabled:bg-gray-300 disabled:text-gray-500"
                                   >
-                                    {isEditingPrediction ? "Update Prediction" : "Submit Prediction"}
+                                    {isPredictionTimeExpired ? "Predictions Locked" : (isEditingPrediction ? "Update Prediction" : "Submit Prediction")}
                                   </Button>
                                   {isEditingPrediction && (
                                     <Button 
