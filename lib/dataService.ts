@@ -413,9 +413,20 @@ export class DataService {
         })
 
         console.log('DataService: Races from database:', races.length);
+        
+        // Auto-complete races that have passed their date
+        const now = new Date();
+        const updatedRaces = races.map((race: Race) => {
+          if (!race.isCompleted && new Date(race.date) <= now) {
+            console.log(`DataService: Auto-marking race ${race.name} as completed (date: ${race.date})`);
+            return { ...race, isCompleted: true };
+          }
+          return race;
+        });
+        
         // Cache locally
-        setLocalData('races', races)
-        return races
+        setLocalData('races', updatedRaces)
+        return updatedRaces
       } catch (error) {
         console.error('Error fetching races:', error)
         // Fallback to local data
@@ -423,11 +434,22 @@ export class DataService {
         console.log('DataService: Using local races:', localRaces.length);
         return localRaces
       }
-    } else {
-      const localRaces = getLocalData('races', [])
-      console.log('DataService: Using local races (offline):', localRaces.length);
-      return localRaces
-    }
+          } else {
+        const localRaces = getLocalData('races', [])
+        console.log('DataService: Using local races (offline):', localRaces.length);
+        
+        // Auto-complete races that have passed their date (offline mode)
+        const now = new Date();
+        const updatedLocalRaces = localRaces.map((race: Race) => {
+          if (!race.isCompleted && new Date(race.date) <= now) {
+            console.log(`DataService: Auto-marking race ${race.name} as completed (offline mode, date: ${race.date})`);
+            return { ...race, isCompleted: true };
+          }
+          return race;
+        });
+        
+        return updatedLocalRaces
+      }
   }
 
   async createRace(raceData: { name: string; city: string; date: string }): Promise<Race> {

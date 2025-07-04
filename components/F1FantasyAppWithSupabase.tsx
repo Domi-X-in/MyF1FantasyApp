@@ -412,8 +412,18 @@ export default function F1FantasyAppWithSupabase() {
       console.log('Users loaded:', usersData.length);
       console.log('Races loaded:', racesData.length);
       
+      // Auto-complete races that have passed their date
+      const now = new Date();
+      const updatedRaces = racesData.map((race: Race) => {
+        if (!race.isCompleted && new Date(race.date) <= now) {
+          console.log(`Auto-marking race ${race.name} as completed (date: ${race.date})`);
+          return { ...race, isCompleted: true };
+        }
+        return race;
+      });
+      
       setUsers(usersData);
-      setRaces(racesData);
+      setRaces(updatedRaces);
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -619,11 +629,17 @@ export default function F1FantasyAppWithSupabase() {
   };
 
   const getUpcomingRace = () => {
-    return races.find(race => !race.isCompleted);
+    const now = new Date();
+    return races
+      .filter(race => new Date(race.date) > now && !race.isCompleted)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
   };
 
   const getCompletedRaces = () => {
-    return races.filter(race => race.isCompleted);
+    const now = new Date();
+    return races.filter(race => 
+      race.isCompleted || new Date(race.date) <= now
+    );
   };
 
   const getCurrentUserPrediction = () => {
@@ -924,7 +940,7 @@ export default function F1FantasyAppWithSupabase() {
 
   // Export/Import functions for race results
   const exportResultsToCSV = () => {
-    const completedRaces = races.filter(race => race.isCompleted && race.results);
+    const completedRaces = getCompletedRaces().filter(race => race.results);
     
     if (completedRaces.length === 0) {
       alert("No completed races with results to export.");
@@ -1094,7 +1110,7 @@ export default function F1FantasyAppWithSupabase() {
     setIsRecalculatingScores(true);
     try {
       // Loop through all completed races
-      for (const race of races.filter(r => r.isCompleted && r.results)) {
+      for (const race of getCompletedRaces().filter(r => r.results)) {
         if (race.results) {
           await dataService.instance.updateRaceResults(race.id, race.results);
         }
@@ -1532,7 +1548,7 @@ export default function F1FantasyAppWithSupabase() {
                           <div>
                             <h3 className="font-semibold text-gray-900">Welcome, {currentUser.name}!</h3>
                             <p className="text-sm text-gray-600">
-                              @{currentUser.username} • {currentUser.stars} ⭐ • {currentUser.racesParticipated || 0} races
+                              @{currentUser.username}
                             </p>
                           </div>
                           <div className="flex gap-2">
@@ -2703,7 +2719,7 @@ export default function F1FantasyAppWithSupabase() {
                           <form className="space-y-3" onSubmit={e => { e.preventDefault(); addRaceResults(); }}>
                             <select value={selectedRaceForResults} onChange={e => setSelectedRaceForResults(e.target.value)} className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600">
                               <option value="">Select a race</option>
-                              {races.filter(r => !r.isCompleted).map(race => (
+                              {races.filter(r => !r.isCompleted && new Date(r.date) <= new Date()).map(race => (
                                 <option key={race.id} value={race.id}>{race.name} - {formatDate(race.date)}</option>
                               ))}
                             </select>
@@ -2740,7 +2756,7 @@ export default function F1FantasyAppWithSupabase() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {races.filter(race => race.isCompleted && race.results).map(race => (
+                                  {getCompletedRaces().filter(race => race.results).map(race => (
                                     <tr key={race.id} className="border-b">
                                       <td className="px-2 py-1">{race.name}</td>
                                       <td className="px-2 py-1">{race.city}</td>
@@ -2859,7 +2875,7 @@ export default function F1FantasyAppWithSupabase() {
                               onChange={e => handleRaceSelection(e.target.value)}
                             >
                               <option value="">Select Race</option>
-                              {races.filter(r => r.isCompleted && selectedUserId).map(r => {
+                              {getCompletedRaces().filter(r => selectedUserId).map(r => {
                                 const hasPrediction = r.predictions[selectedUserId!];
                                 const status = hasPrediction ? "✏️ Edit" : "➕ Add";
                                 return (
