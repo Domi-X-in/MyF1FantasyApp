@@ -2572,7 +2572,7 @@ export default function F1FantasyAppWithSupabase() {
                           const typedPos = pos as 'first' | 'second' | 'third';
                           const isCorrect = historyItem.accuracy[typedPos];
                           return (
-                            <div key={pos} className={`text-sm ${isCorrect ? 'text-green-600' : 'text-red-600'}`}>
+                            <div key={pos} className={`text-xs ${isCorrect ? 'text-green-600' : 'text-red-600'}`}>
                               {labels[typedPos]}: {String(code)} - {drivers.find(d => d.code === code)?.name || String(code)} {isCorrect ? '✅' : '❌'}
                             </div>
                           );
@@ -2594,19 +2594,19 @@ export default function F1FantasyAppWithSupabase() {
                               {historyItem.actualResults ? (
                                 <div className="grid grid-cols-2 gap-4">
                                   <div>
-                                    <h5 className="text-sm font-semibold text-blue-600 mb-2">Your Prediction</h5>
+                                    <h5 className="text-xs font-semibold text-blue-600 mb-2">Your Prediction</h5>
                                     <div className="space-y-1">
                                       {predictionNodes}
                                     </div>
                                   </div>
                                   <div>
-                                    <h5 className="text-sm font-semibold text-green-600 mb-2">Actual Results</h5>
+                                    <h5 className="text-xs font-semibold text-green-600 mb-2">Actual Results</h5>
                                     <div className="space-y-1">
                                       {(["first", "second", "third"] as const).map((pos) => {
                                         const labels = { first: "1st", second: "2nd", third: "3rd" };
                                         const code = historyItem.actualResults![pos];
                                         return (
-                                          <div key={pos} className="text-sm text-gray-600">
+                                          <div key={pos} className="text-xs text-gray-600">
                                             {labels[pos]}: {code} - {drivers.find(d => d.code === code)?.name || code}
                                           </div>
                                         );
