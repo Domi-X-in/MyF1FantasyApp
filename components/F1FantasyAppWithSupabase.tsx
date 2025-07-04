@@ -42,23 +42,48 @@ const ADMIN_CREDENTIALS = {
 
 // Scoring function
 const calculateScore = (prediction: Positions, results: Positions): number => {
-  if (prediction.first === results.first && 
-      prediction.second === results.second && 
-      prediction.third === results.third) {
-    return 100;
+  // Check for perfect match
+  const isPerfect = 
+    prediction.first === results.first &&
+    prediction.second === results.second &&
+    prediction.third === results.third;
+  
+  if (isPerfect) {
+    return 60; // Perfect match = 60 points total (30+20+10)
   }
   
-  let score = 0;
+  // Track which drivers have already been matched
+  const usedActual = { first: false, second: false, third: false };
+  let total = 0;
   
-  if (prediction.first === results.first) score += 30;
-  if (prediction.second === results.second) score += 30;
-  if (prediction.third === results.third) score += 30;
+  // 1st position: 30 points if correct, 5 if in top 3 but wrong
+  if (prediction.first === results.first) {
+    total += 30; usedActual.first = true;
+  } else if (prediction.first === results.second && !usedActual.second) {
+    total += 5; usedActual.second = true;
+  } else if (prediction.first === results.third && !usedActual.third) {
+    total += 5; usedActual.third = true;
+  }
   
-  if (prediction.first === results.second || prediction.first === results.third) score += 10;
-  if (prediction.second === results.first || prediction.second === results.third) score += 10;
-  if (prediction.third === results.first || prediction.third === results.second) score += 10;
+  // 2nd position: 20 points if correct, 5 if in top 3 but wrong
+  if (prediction.second === results.second && !usedActual.second) {
+    total += 20; usedActual.second = true;
+  } else if (prediction.second === results.first && !usedActual.first) {
+    total += 5; usedActual.first = true;
+  } else if (prediction.second === results.third && !usedActual.third) {
+    total += 5; usedActual.third = true;
+  }
   
-  return score;
+  // 3rd position: 10 points if correct, 5 if in top 3 but wrong
+  if (prediction.third === results.third && !usedActual.third) {
+    total += 10; usedActual.third = true;
+  } else if (prediction.third === results.first && !usedActual.first) {
+    total += 5; usedActual.first = true;
+  } else if (prediction.third === results.second && !usedActual.second) {
+    total += 5; usedActual.second = true;
+  }
+  
+  return total;
 };
 
 // Car data mapping teams to their car images
@@ -209,9 +234,7 @@ export default function F1FantasyAppWithSupabase() {
   const [isRecalculatingScores, setIsRecalculatingScores] = useState(false);
 
   // New state variables for race-categorized leaderboard
-  const [leaderboardView, setLeaderboardView] = useState<'overall' | 'race-breakdown' | 'recent' | 'progress-chart'>('overall');
-  const [selectedRaceFilter, setSelectedRaceFilter] = useState<string>('all');
-  const [expandedRaces, setExpandedRaces] = useState<Set<string>>(new Set());
+  const [leaderboardView, setLeaderboardView] = useState<'overall' | 'recent' | 'progress-chart' | 'table-result'>('overall');
   const [processedLeaderboardData, setProcessedLeaderboardData] = useState<any[]>([]);
 
   const router = useRouter();
@@ -1118,12 +1141,24 @@ export default function F1FantasyAppWithSupabase() {
         participants: [] as any[]
       };
 
+      // First, collect all user scores for this race
+      const userScores: { userId: string, score: number }[] = [];
+      Object.entries(race.predictions).forEach(([userId, prediction]) => {
+        if (!userRaceStats[userId]) return;
+        const score = calculateScore(prediction, race.results!);
+        userScores.push({ userId, score });
+      });
+      // Find the highest score for this race
+      const maxScore = userScores.length > 0 ? Math.max(...userScores.map(u => u.score)) : 0;
+      // Find all userIds with the highest score
+      const starWinners = userScores.filter(u => u.score === maxScore && maxScore > 0).map(u => u.userId);
+
       // Process each user's prediction for this race
       Object.entries(race.predictions).forEach(([userId, prediction]) => {
         if (!userRaceStats[userId]) return;
 
         const score = calculateScore(prediction, race.results!);
-        const isStarWinner = race.starWinners?.includes(userId) || false;
+        const isStarWinner = starWinners.includes(userId);
         const starsEarned = isStarWinner ? 1 : 0;
 
         const userRaceResult = {
@@ -1193,38 +1228,12 @@ export default function F1FantasyAppWithSupabase() {
       case 'overall':
         sorted.sort((a, b) => b.totalStars - a.totalStars || b.racesParticipated - a.racesParticipated);
         break;
-      case 'recent':
-        sorted.sort((a, b) => {
-          const aRecentStars = a.recentPerformance.reduce((sum: number, race: any) => sum + race.starsEarned, 0);
-          const bRecentStars = b.recentPerformance.reduce((sum: number, race: any) => sum + race.starsEarned, 0);
-          return bRecentStars - aRecentStars;
-        });
-        break;
-      case 'race-breakdown':
-        if (raceFilter && raceFilter !== 'all') {
-          sorted.sort((a, b) => {
-            const aRaceStars = a.raceBreakdown[raceFilter]?.starsEarned || 0;
-            const bRaceStars = b.raceBreakdown[raceFilter]?.starsEarned || 0;
-            return bRaceStars - aRaceStars;
-          });
-        } else {
-          sorted.sort((a, b) => b.totalStars - a.totalStars);
-        }
-        break;
     }
 
     return sorted;
   };
 
-  const toggleRaceExpansion = (raceId: string) => {
-    const newExpanded = new Set(expandedRaces);
-    if (newExpanded.has(raceId)) {
-      newExpanded.delete(raceId);
-    } else {
-      newExpanded.add(raceId);
-    }
-    setExpandedRaces(newExpanded);
-  };
+
 
   const getPerformanceIndicator = (score: number) => {
     if (score >= 30) return '🔥'; // Perfect match
@@ -1341,6 +1350,53 @@ export default function F1FantasyAppWithSupabase() {
     });
 
     return userColors;
+  };
+
+  // Helper function to calculate per-position points for display
+  const calculatePositionPoints = (prediction: Positions, results: Positions) => {
+    const posPoints = { first: 0, second: 0, third: 0 };
+    
+    // Check for perfect match
+    const isPerfect = 
+      prediction.first === results.first &&
+      prediction.second === results.second &&
+      prediction.third === results.third;
+    
+    if (isPerfect) {
+      return { first: 30, second: 20, third: 10 }; // Perfect match: 30+20+10 = 60 total
+    }
+    
+    // Track which drivers have already been matched
+    const usedActual = { first: false, second: false, third: false };
+    
+    // 1st position: 30 points if correct, 5 if in top 3 but wrong
+    if (prediction.first === results.first) {
+      posPoints.first = 30; usedActual.first = true;
+    } else if (prediction.first === results.second && !usedActual.second) {
+      posPoints.first = 5; usedActual.second = true;
+    } else if (prediction.first === results.third && !usedActual.third) {
+      posPoints.first = 5; usedActual.third = true;
+    }
+    
+    // 2nd position: 20 points if correct, 5 if in top 3 but wrong
+    if (prediction.second === results.second && !usedActual.second) {
+      posPoints.second = 20; usedActual.second = true;
+    } else if (prediction.second === results.first && !usedActual.first) {
+      posPoints.second = 5; usedActual.first = true;
+    } else if (prediction.second === results.third && !usedActual.third) {
+      posPoints.second = 5; usedActual.third = true;
+    }
+    
+    // 3rd position: 10 points if correct, 5 if in top 3 but wrong
+    if (prediction.third === results.third && !usedActual.third) {
+      posPoints.third = 10; usedActual.third = true;
+    } else if (prediction.third === results.first && !usedActual.first) {
+      posPoints.third = 5; usedActual.first = true;
+    } else if (prediction.third === results.second && !usedActual.second) {
+      posPoints.third = 5; usedActual.second = true;
+    }
+    
+    return posPoints;
   };
 
   if (!isClient) {
@@ -1935,26 +1991,6 @@ export default function F1FantasyAppWithSupabase() {
                     Overall
                   </button>
                   <button
-                    onClick={() => setLeaderboardView('race-breakdown')}
-                    className={`px-4 py-2 rounded font-medium border transition-colors duration-150 ${
-                      leaderboardView === 'race-breakdown'
-                        ? 'bg-[#E10800] text-white border-[#E10800] shadow'
-                        : 'bg-white text-[#E10800] border-[#E10800] hover:bg-red-50'
-                    }`}
-                  >
-                    Race Breakdown
-                  </button>
-                  <button
-                    onClick={() => setLeaderboardView('recent')}
-                    className={`px-4 py-2 rounded font-medium border transition-colors duration-150 ${
-                      leaderboardView === 'recent'
-                        ? 'bg-[#E10800] text-white border-[#E10800] shadow'
-                        : 'bg-white text-[#E10800] border-[#E10800] hover:bg-red-50'
-                    }`}
-                  >
-                    Recent Performance
-                  </button>
-                  <button
                     onClick={() => setLeaderboardView('progress-chart')}
                     className={`px-4 py-2 rounded font-medium border transition-colors duration-150 ${
                       leaderboardView === 'progress-chart'
@@ -1964,27 +2000,17 @@ export default function F1FantasyAppWithSupabase() {
                   >
                     Progress Chart
                   </button>
+                  <button
+                    onClick={() => setLeaderboardView('table-result')}
+                    className={`px-4 py-2 rounded font-medium border transition-colors duration-150 ${
+                      leaderboardView === 'table-result'
+                        ? 'bg-[#E10800] text-white border-[#E10800] shadow'
+                        : 'bg-white text-[#E10800] border-[#E10800] hover:bg-red-50'
+                    }`}
+                  >
+                    Table Result
+                  </button>
                 </div>
-
-                {/* Race Filter (for race breakdown view) */}
-                {leaderboardView === 'race-breakdown' && (
-                  <Card className="bg-white border border-gray-200 shadow-sm">
-                    <CardContent className="p-4">
-                      <select
-                        value={selectedRaceFilter}
-                        onChange={(e) => setSelectedRaceFilter(e.target.value)}
-                        className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600"
-                      >
-                        <option value="all">All Races</option>
-                        {getCompletedRaces().map(race => (
-                          <option key={race.id} value={race.id}>
-                            {race.name} ({formatDate(race.date)})
-                          </option>
-                        ))}
-                      </select>
-                    </CardContent>
-                  </Card>
-                )}
 
                 {processedLeaderboardData.length === 0 ? (
                   <Card className="bg-white border border-gray-200 shadow-sm">
@@ -2024,123 +2050,7 @@ export default function F1FantasyAppWithSupabase() {
                       </div>
                     )}
 
-                    {/* Recent Performance View */}
-                    {leaderboardView === 'recent' && (
-                      <div className="space-y-3">
-                        {sortLeaderboard(processedLeaderboardData, 'recent').map((user, index) => {
-                          const recentStars = user.recentPerformance.reduce((sum: number, race: any) => sum + race.starsEarned, 0);
-                          const recentScore = user.recentPerformance.reduce((sum: number, race: any) => sum + race.score, 0);
-                          const avgScore = user.recentPerformance.length > 0 ? Math.round(recentScore / user.recentPerformance.length) : 0;
-                          
-                          return (
-                            <Card key={user.userId} className="bg-white border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
-                              <CardContent className="p-4">
-                                <div className="flex items-center justify-between mb-3">
-                                  <div className="flex items-center space-x-3">
-                                    <div className="w-8 h-8 bg-red-600 rounded-full flex items-center justify-center">
-                                      <span className="text-sm font-bold text-white">{index + 1}</span>
-                                    </div>
-                                    <div>
-                                      <h3 className="font-semibold text-gray-900">{user.name}</h3>
-                                      <p className="text-sm text-gray-600">
-                                        @{user.username} • {recentStars} ⭐ in last {user.recentPerformance.length} races
-                                      </p>
-                                    </div>
-                                  </div>
-                                  <div className="text-right">
-                                    <div className="text-lg font-bold text-green-600">{avgScore} avg pts</div>
-                                    <div className="text-sm text-gray-600">{recentStars} ⭐</div>
-                                  </div>
-                                </div>
-                                <div className="grid grid-cols-5 gap-2">
-                                  {user.recentPerformance.map((race: any, raceIndex: number) => (
-                                    <div key={race.raceId} className="text-center p-2 bg-gray-50 rounded">
-                                      <div className="text-xs font-semibold text-gray-700 truncate">{race.raceName.split(' ')[0]}</div>
-                                      <div className="text-lg font-bold text-green-600">{race.score}</div>
-                                      {race.starsEarned > 0 && <Star className="w-4 h-4 text-red-600 fill-current mx-auto" />}
-                                    </div>
-                                  ))}
-                                </div>
-                              </CardContent>
-                            </Card>
-                          );
-                        })}
-                      </div>
-                    )}
 
-                    {/* Race Breakdown View */}
-                    {leaderboardView === 'race-breakdown' && (
-                      <div className="space-y-4">
-                        {getCompletedRaces().map(race => {
-                          const raceParticipants = processedLeaderboardData
-                            .filter(user => user.raceBreakdown[race.id])
-                            .sort((a, b) => {
-                              const aScore = a.raceBreakdown[race.id]?.score || 0;
-                              const bScore = b.raceBreakdown[race.id]?.score || 0;
-                              return bScore - aScore;
-                            });
-
-                          if (raceParticipants.length === 0) return null;
-
-                          const isExpanded = expandedRaces.has(race.id);
-                          const showRace = selectedRaceFilter === 'all' || selectedRaceFilter === race.id;
-
-                          if (!showRace) return null;
-
-                          return (
-                            <Card key={race.id} className="bg-white border border-gray-200 shadow-sm">
-                              <CardContent className="p-4">
-                                <div 
-                                  className="flex items-center justify-between cursor-pointer"
-                                  onClick={() => toggleRaceExpansion(race.id)}
-                                >
-                                  <div>
-                                    <h3 className="font-semibold text-gray-900">🏆 {race.name}</h3>
-                                    <p className="text-sm text-gray-600">{race.city} • {formatDate(race.date)}</p>
-                                  </div>
-                                  <div className="flex items-center space-x-2">
-                                    <span className="text-sm text-gray-600">{raceParticipants.length} participants</span>
-                                    <button className="text-gray-400 hover:text-gray-600">
-                                      {isExpanded ? '▼' : '▶'}
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {isExpanded && (
-                                  <div className="mt-4 space-y-2">
-                                    {raceParticipants.map((participant, index) => {
-                                      const raceData = participant.raceBreakdown[race.id];
-                                      return (
-                                        <div key={participant.userId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                          <div className="flex items-center space-x-3">
-                                            <div className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center">
-                                              <span className="text-xs font-bold text-white">{index + 1}</span>
-                                            </div>
-                                            <div>
-                                              <div className="font-semibold text-gray-900">{participant.name}</div>
-                                              <div className="text-sm text-gray-600">@{participant.username}</div>
-                                            </div>
-                                          </div>
-                                          <div className="flex items-center space-x-3">
-                                            <div className="text-right">
-                                              <div className="text-lg font-bold text-green-600">{raceData.score} pts</div>
-                                              <div className="text-sm text-gray-600">{getPerformanceIndicator(raceData.score)}</div>
-                                            </div>
-                                            {raceData.isStarWinner && (
-                                              <Star className="w-6 h-6 text-red-600 fill-current" />
-                                            )}
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </CardContent>
-                            </Card>
-                          );
-                        })}
-                      </div>
-                    )}
 
                     {/* Progress Chart View */}
                     {leaderboardView === 'progress-chart' && (
@@ -2227,12 +2137,12 @@ export default function F1FantasyAppWithSupabase() {
                                     </ResponsiveContainer>
                                   </div>
                                   
-                                  {/* Star Wins Table */}
+                                  {/* Table Results */}
                                   <div className="mt-10">
-                                    <h4 className="text-xl font-bold mb-4 text-gray-800">Star Wins by Race</h4>
+                                    <h4 className="text-xl font-bold mb-4 text-gray-800">Table Results</h4>
                                     {(() => {
-                                      const { tableData, races } = generateStarWinsTableData();
-                                      if (tableData.length === 0) {
+                                      const completedRaces = getCompletedRaces().filter(race => race.results);
+                                      if (completedRaces.length === 0) {
                                         return (
                                           <div className="text-center py-4">
                                             <p className="text-gray-600">No completed races with results yet.</p>
@@ -2241,41 +2151,86 @@ export default function F1FantasyAppWithSupabase() {
                                       }
                                       return (
                                         <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-                                          <table className="min-w-max text-sm">
+                                          <table className="min-w-max text-xs">
                                             <thead>
                                               <tr>
                                                 <th className="px-3 py-2 text-left bg-gray-50 border-b-2 border-gray-200 font-semibold sticky left-0 z-10">User</th>
-                                                {races.map((race) => {
-                                                  const city = race.city;
-                                                  const date = formatShortDate(race.date);
-                                                  return (
-                                                    <th key={race.id} className="px-2 py-2 border-b-2 border-gray-200 text-center align-middle" style={{verticalAlign: 'middle', minWidth: 48}}>
-                                                      <div className="flex flex-col items-center justify-center h-full w-full" style={{height: 160, justifyContent: 'center', alignItems: 'center'}}>
-                                                        <span className="font-semibold text-xs text-gray-700 text-center" style={{writingMode: 'vertical-rl', transform: 'rotate(180deg)', fontSize: '0.75rem', letterSpacing: '0.5px', display: 'inline-block', whiteSpace: 'pre-line'}}>
-                                                          {city}
-                                                          {'\n'}
-                                                          <span style={{ fontSize: '0.525rem' }}>{date}</span>
-                                                        </span>
-                                                      </div>
-                                                    </th>
-                                                  );
-                                                })}
-                                                <th className="px-3 py-2 text-center bg-gray-50 border-b-2 border-gray-200 font-semibold">Total</th>
+                                                {completedRaces.map((race) => (
+                                                  <th key={race.id} className="px-2 py-2 border-b-2 border-gray-200 text-center align-middle min-w-[120px]">
+                                                    <div className="flex flex-col items-center justify-center h-full w-full">
+                                                      <span className="font-semibold text-xs text-gray-700 text-center" style={{writingMode: 'vertical-rl', transform: 'rotate(180deg)', fontSize: '0.75rem', letterSpacing: '0.5px', display: 'inline-block', whiteSpace: 'pre-line'}}>
+                                                        {race.city}<br/>{formatShortDate(race.date)}
+                                                      </span>
+                                                    </div>
+                                                  </th>
+                                                ))}
+                                                <th className="px-3 py-2 text-center bg-green-100 border-b-2 border-gray-200 font-semibold">Total Stars</th>
                                               </tr>
                                             </thead>
                                             <tbody>
-                                              {tableData.map((user) => (
+                                              {/* Real Results Row */}
+                                              <tr className="bg-green-100 font-bold">
+                                                <td className="px-3 py-2 sticky left-0 z-10 bg-green-100">Race Results</td>
+                                                {completedRaces.map((race) => (
+                                                  <td key={race.id} className="px-2 py-2 text-center align-top min-w-[120px]">
+                                                    {race.results ? (
+                                                      <div className="flex flex-col items-center gap-1">
+                                                        <div className="flex flex-row gap-1 text-[10px]">
+                                                          <span className="font-bold text-gray-700">1st:</span> <span>{race.results.first}</span>
+                                                        </div>
+                                                        <div className="flex flex-row gap-1 text-[10px]">
+                                                          <span className="font-bold text-gray-700">2nd:</span> <span>{race.results.second}</span>
+                                                        </div>
+                                                        <div className="flex flex-row gap-1 text-[10px]">
+                                                          <span className="font-bold text-gray-700">3rd:</span> <span>{race.results.third}</span>
+                                                        </div>
+                                                      </div>
+                                                    ) : (
+                                                      <span className="text-gray-300">—</span>
+                                                    )}
+                                                  </td>
+                                                ))}
+                                                <td className="px-3 py-2 text-center bg-green-100">—</td>
+                                              </tr>
+                                              {/* User Rows */}
+                                              {processedLeaderboardData.map((user) => (
                                                 <tr key={user.userId} className="border-b hover:bg-gray-50">
                                                   <td className="px-3 py-2 font-medium bg-gray-50 sticky left-0 z-10">{user.name}</td>
-                                                  {races.map((race) => {
-                                                    const star = user[race.id] || 0;
-                                                    return (
-                                                      <td key={race.id} className="px-2 py-2 text-center">
-                                                        <span className={`font-bold ${star ? 'text-green-600' : 'text-gray-300'}`}>{star ? 1 : ''}</span>
-                                                      </td>
-                                                    );
+                                                  {completedRaces.map((race) => {
+                                                    const breakdown = user.raceBreakdown[race.id];
+                                                    const results = race.results;
+                                                    if (breakdown && results) {
+                                                      const posPoints = calculatePositionPoints(breakdown.prediction, results);
+                                                      const total = calculateScore(breakdown.prediction, results);
+                                                      return (
+                                                        <td key={race.id} className="px-2 py-2 text-center align-top min-w-[120px]">
+                                                          <div className="flex flex-col items-center gap-1">
+                                                            <div className="flex flex-row gap-1 text-[10px]">
+                                                              <span className="font-bold text-gray-700">1st:</span> <span>{breakdown.prediction.first}</span>
+                                                              <span className="text-gray-500">- {posPoints.first} pts</span>
+                                                            </div>
+                                                            <div className="flex flex-row gap-1 text-[10px]">
+                                                              <span className="font-bold text-gray-700">2nd:</span> <span>{breakdown.prediction.second}</span>
+                                                              <span className="text-gray-500">- {posPoints.second} pts</span>
+                                                            </div>
+                                                            <div className="flex flex-row gap-1 text-[10px]">
+                                                              <span className="font-bold text-gray-700">3rd:</span> <span>{breakdown.prediction.third}</span>
+                                                              <span className="text-gray-500">- {posPoints.third} pts</span>
+                                                            </div>
+                                                            <div className="text-xs font-bold text-green-700">= {total} pts</div>
+                                                            {breakdown.isStarWinner && <span title="Star Winner" className="text-yellow-500">★</span>}
+                                                          </div>
+                                                        </td>
+                                                      );
+                                                    } else {
+                                                      return (
+                                                        <td key={race.id} className="px-2 py-2 text-center align-top min-w-[120px]">
+                                                          <span className="text-gray-300">—</span>
+                                                        </td>
+                                                      );
+                                                    }
                                                   })}
-                                                  <td className="px-3 py-2 text-center font-bold text-red-600">{user.totalStars}</td>
+                                                  <td className="px-3 py-2 text-center bg-green-100 font-bold text-red-600">{user.totalStars}</td>
                                                 </tr>
                                               ))}
                                             </tbody>
@@ -2289,6 +2244,95 @@ export default function F1FantasyAppWithSupabase() {
                             })()}
                           </CardContent>
                         </Card>
+                      </div>
+                    )}
+                    {/* Table Result View */}
+                    {leaderboardView === 'table-result' && (
+                      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+                        <table className="min-w-max text-xs">
+                          <thead>
+                            <tr>
+                              <th className="px-3 py-2 text-left bg-gray-50 border-b-2 border-gray-200 font-semibold sticky left-0 z-10">User</th>
+                              {getCompletedRaces().map((race) => (
+                                <th key={race.id} className="px-2 py-2 border-b-2 border-gray-200 text-center align-middle min-w-[120px]">
+                                  <div className="flex flex-col items-center justify-center h-full w-full">
+                                    <span className="font-semibold text-xs text-gray-700 text-center" style={{writingMode: 'vertical-rl', transform: 'rotate(180deg)', fontSize: '0.75rem', letterSpacing: '0.5px', display: 'inline-block', whiteSpace: 'pre-line'}}>
+                                      {race.city}<br/>{formatShortDate(race.date)}
+                                    </span>
+                                  </div>
+                                </th>
+                              ))}
+                              <th className="px-3 py-2 text-center bg-green-100 border-b-2 border-gray-200 font-semibold">Total Stars</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {/* Real Results Row */}
+                            <tr className="bg-green-100 font-bold">
+                              <td className="px-3 py-2 sticky left-0 z-10 bg-green-100">Race Results</td>
+                              {getCompletedRaces().map((race) => (
+                                <td key={race.id} className="px-2 py-2 text-center align-top min-w-[120px]">
+                                  {race.results ? (
+                                    <div className="flex flex-col items-center gap-1">
+                                      <div className="flex flex-row gap-1 text-[10px]">
+                                        <span className="font-bold text-gray-700">1st:</span> <span>{race.results.first}</span>
+                                      </div>
+                                      <div className="flex flex-row gap-1 text-[10px]">
+                                        <span className="font-bold text-gray-700">2nd:</span> <span>{race.results.second}</span>
+                                      </div>
+                                      <div className="flex flex-row gap-1 text-[10px]">
+                                        <span className="font-bold text-gray-700">3rd:</span> <span>{race.results.third}</span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <span className="text-gray-300">—</span>
+                                  )}
+                                </td>
+                              ))}
+                              <td className="px-3 py-2 text-center bg-green-100">—</td>
+                            </tr>
+                            {/* User Rows */}
+                            {processedLeaderboardData.map((user) => (
+                              <tr key={user.userId} className="border-b hover:bg-gray-50">
+                                <td className="px-3 py-2 font-medium bg-gray-50 sticky left-0 z-10">{user.name}</td>
+                                {getCompletedRaces().map((race) => {
+                                  const breakdown = user.raceBreakdown[race.id];
+                                  const results = race.results;
+                                  if (breakdown && results) {
+                                    const posPoints = calculatePositionPoints(breakdown.prediction, results);
+                                    const total = calculateScore(breakdown.prediction, results);
+                                    return (
+                                      <td key={race.id} className="px-2 py-2 text-center align-top min-w-[120px]">
+                                        <div className="flex flex-col items-center gap-1">
+                                          <div className="flex flex-row gap-1 text-[10px]">
+                                            <span className="font-bold text-gray-700">1st:</span> <span>{breakdown.prediction.first}</span>
+                                            <span className="text-gray-500">- {posPoints.first} pts</span>
+                                          </div>
+                                          <div className="flex flex-row gap-1 text-[10px]">
+                                            <span className="font-bold text-gray-700">2nd:</span> <span>{breakdown.prediction.second}</span>
+                                            <span className="text-gray-500">- {posPoints.second} pts</span>
+                                          </div>
+                                          <div className="flex flex-row gap-1 text-[10px]">
+                                            <span className="font-bold text-gray-700">3rd:</span> <span>{breakdown.prediction.third}</span>
+                                            <span className="text-gray-500">- {posPoints.third} pts</span>
+                                          </div>
+                                          <div className="text-xs font-bold text-green-700">= {total} pts</div>
+                                          {breakdown.isStarWinner && <span title="Star Winner" className="text-yellow-500">★</span>}
+                                        </div>
+                                      </td>
+                                    );
+                                  } else {
+                                    return (
+                                      <td key={race.id} className="px-2 py-2 text-center align-top min-w-[120px]">
+                                        <span className="text-gray-300">—</span>
+                                      </td>
+                                    );
+                                  }
+                                })}
+                                <td className="px-3 py-2 text-center bg-green-100 font-bold text-red-600">{user.totalStars}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     )}
                   </div>
@@ -2473,9 +2517,11 @@ export default function F1FantasyAppWithSupabase() {
                     <div>
                       <h3 className="text-lg font-semibold text-blue-600 mb-2">⭐ Scoring System</h3>
                       <ul className="space-y-2 text-sm text-gray-700">
-                        <li>• <strong>Perfect Match:</strong> All 3 positions correct = 30 points</li>
-                        <li>• <strong>Position Match:</strong> Each correct position = 10 points</li>
-                        <li>• <strong>Driver in Top 3:</strong> Driver in top 3 but wrong position = 3 points</li>
+                        <li>• <strong>Perfect Match:</strong> All 3 positions correct = 60 points (30+20+10)</li>
+                        <li>• <strong>1st Place Correct:</strong> 30 points</li>
+                        <li>• <strong>2nd Place Correct:</strong> 20 points</li>
+                        <li>• <strong>3rd Place Correct:</strong> 10 points</li>
+                        <li>• <strong>Driver in Top 3 but Wrong Position:</strong> 5 points</li>
                         <li>• <strong>Star Award:</strong> Only the user(s) with the highest score gets a ⭐</li>
                       </ul>
                     </div>
