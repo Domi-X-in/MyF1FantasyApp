@@ -9,6 +9,22 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash VARCHAR(255) NOT NULL,
     stars INTEGER DEFAULT 0,
     races_participated INTEGER DEFAULT 0,
+    last_password_reset TIMESTAMP WITH TIME ZONE,
+    password_reset_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create password reset requests table
+CREATE TABLE IF NOT EXISTS password_reset_requests (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    requested_by UUID REFERENCES users(id),
+    requested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    new_password_hash VARCHAR(255) NOT NULL,
+    is_used BOOLEAN DEFAULT FALSE,
+    used_at TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'expired')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -45,6 +61,9 @@ CREATE INDEX IF NOT EXISTS idx_races_date ON races(date);
 CREATE INDEX IF NOT EXISTS idx_races_completed ON races(is_completed);
 CREATE INDEX IF NOT EXISTS idx_predictions_user_id ON predictions(user_id);
 CREATE INDEX IF NOT EXISTS idx_predictions_race_id ON predictions(race_id);
+CREATE INDEX IF NOT EXISTS idx_password_reset_user_id ON password_reset_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_password_reset_status ON password_reset_requests(status);
+CREATE INDEX IF NOT EXISTS idx_password_reset_requested_at ON password_reset_requests(requested_at);
 
 -- Create updated_at trigger function
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -65,10 +84,14 @@ CREATE TRIGGER update_races_updated_at BEFORE UPDATE ON races
 CREATE TRIGGER update_predictions_updated_at BEFORE UPDATE ON predictions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_password_reset_updated_at BEFORE UPDATE ON password_reset_requests
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- Enable Row Level Security
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE races ENABLE ROW LEVEL SECURITY;
 ALTER TABLE predictions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE password_reset_requests ENABLE ROW LEVEL SECURITY;
 
 -- Create policies for users table
 CREATE POLICY "Users can view all users" ON users
@@ -81,6 +104,19 @@ CREATE POLICY "Users can update their own data" ON users
     FOR UPDATE USING (true);
 
 CREATE POLICY "Users can delete any user" ON users
+    FOR DELETE USING (true);
+
+-- Create policies for password_reset_requests table
+CREATE POLICY "Anyone can view password reset requests" ON password_reset_requests
+    FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can insert password reset requests" ON password_reset_requests
+    FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Anyone can update password reset requests" ON password_reset_requests
+    FOR UPDATE USING (true);
+
+CREATE POLICY "Anyone can delete password reset requests" ON password_reset_requests
     FOR DELETE USING (true);
 
 -- Create policies for races table
@@ -155,6 +191,21 @@ BEGIN
     FROM predictions p
     JOIN races r ON p.race_id = r.id
     WHERE p.user_id = user_uuid AND r.is_completed = true;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create function to generate secure random password
+CREATE OR REPLACE FUNCTION generate_secure_password(length INTEGER DEFAULT 12)
+RETURNS TEXT AS $$
+DECLARE
+    chars TEXT := 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+    result TEXT := '';
+    i INTEGER;
+BEGIN
+    FOR i IN 1..length LOOP
+        result := result || substr(chars, floor(random() * length(chars))::integer + 1, 1);
+    END LOOP;
+    RETURN result;
 END;
 $$ LANGUAGE plpgsql;
 

@@ -41,6 +41,17 @@ export interface Positions {
   third: string
 }
 
+export interface PasswordResetRequest {
+  id: string
+  userId: string
+  requestedBy: string
+  requestedAt: string
+  newPasswordHash: string
+  isUsed: boolean
+  usedAt?: string
+  status: 'pending' | 'completed' | 'expired'
+}
+
 export interface AuthSession {
   user: User
   access_token: string
@@ -49,7 +60,7 @@ export interface AuthSession {
 
 export interface OfflineAction {
   id: string
-  type: 'CREATE_USER' | 'UPDATE_USER' | 'DELETE_USER' | 'CREATE_RACE' | 'UPDATE_RACE' | 'DELETE_RACE' | 'CREATE_PREDICTION' | 'UPDATE_PREDICTION'
+  type: 'CREATE_USER' | 'UPDATE_USER' | 'DELETE_USER' | 'CREATE_RACE' | 'UPDATE_RACE' | 'DELETE_RACE' | 'CREATE_PREDICTION' | 'UPDATE_PREDICTION' | 'CREATE_PASSWORD_RESET' | 'UPDATE_PASSWORD_RESET'
   data: any
   timestamp: number
 }
@@ -217,7 +228,7 @@ export class DataService {
     // Check for hardcoded admin user first
     if (username === ADMIN_CREDENTIALS.username && password === ADMIN_CREDENTIALS.password) {
       const adminUser: User = {
-        id: "admin-user-id",
+        id: "00000000-0000-0000-0000-000000000001",
         username: ADMIN_CREDENTIALS.username,
         name: "Admin User",
         password: ADMIN_CREDENTIALS.password,
@@ -434,22 +445,22 @@ export class DataService {
         console.log('DataService: Using local races:', localRaces.length);
         return localRaces
       }
-          } else {
-        const localRaces = getLocalData('races', [])
-        console.log('DataService: Using local races (offline):', localRaces.length);
-        
-        // Auto-complete races that have passed their date (offline mode)
-        const now = new Date();
-        const updatedLocalRaces = localRaces.map((race: Race) => {
-          if (!race.isCompleted && new Date(race.date) <= now) {
-            console.log(`DataService: Auto-marking race ${race.name} as completed (offline mode, date: ${race.date})`);
-            return { ...race, isCompleted: true };
-          }
-          return race;
-        });
-        
-        return updatedLocalRaces
-      }
+    } else {
+      const localRaces = getLocalData('races', [])
+      console.log('DataService: Using local races (offline):', localRaces.length);
+      
+      // Auto-complete races that have passed their date (offline mode)
+      const now = new Date();
+      const updatedLocalRaces = localRaces.map((race: Race) => {
+        if (!race.isCompleted && new Date(race.date) <= now) {
+          console.log(`DataService: Auto-marking race ${race.name} as completed (offline mode, date: ${race.date})`);
+          return { ...race, isCompleted: true };
+        }
+        return race;
+      });
+      
+      return updatedLocalRaces
+    }
   }
 
   async createRace(raceData: { name: string; city: string; date: string }): Promise<Race> {
@@ -807,6 +818,12 @@ export class DataService {
           case 'CREATE_PREDICTION':
             await this.submitPrediction(action.data.userId, action.data.raceId, action.data.prediction)
             break
+          case 'CREATE_PASSWORD_RESET':
+            await this.createPasswordResetRequest(action.data.userId, action.data.newPassword, action.data.adminId)
+            break
+          case 'UPDATE_PASSWORD_RESET':
+            await this.markPasswordResetAsUsed(action.data.resetId)
+            break
         }
         this.offlineQueue.removeAction(action.id)
       } catch (error) {
@@ -833,6 +850,232 @@ export class DataService {
     }
   }
 
+  // Password Reset Management
+  async createPasswordResetRequest(userId: string, newPassword: string, adminId: string): Promise<PasswordResetRequest> {
+    const newPasswordHash = await hashPassword(newPassword)
+    
+    // Validate required fields
+    if (!userId || !adminId) {
+      throw new Error('User ID and Admin ID are required')
+    }
+    
+    if (this.isOnline) {
+      try {
+        // Use the admin ID directly since it's now a valid UUID
+        const requestAdminId = adminId
+        
+        const { data, error } = await getSupabase()
+          .from('password_reset_requests')
+          .insert({
+            user_id: userId,
+            requested_by: requestAdminId,
+            new_password_hash: newPasswordHash,
+            status: 'pending'
+          })
+          .select()
+          .single()
+
+        if (error) throw error
+
+        return {
+          id: data.id,
+          userId: data.user_id,
+          requestedBy: adminId, // Keep original adminId for consistency
+          requestedAt: data.requested_at,
+          newPasswordHash: data.new_password_hash,
+          isUsed: data.is_used,
+          usedAt: data.used_at,
+          status: data.status
+        }
+      } catch (error) {
+        console.error('Error creating password reset request:', error)
+        throw error
+      }
+    } else {
+      throw new Error('Password reset requires online connection')
+    }
+  }
+
+  async getPendingPasswordResets(): Promise<PasswordResetRequest[]> {
+    if (this.isOnline) {
+      try {
+        // First get the password reset requests
+        const { data: resetData, error: resetError } = await getSupabase()
+          .from('password_reset_requests')
+          .select('*')
+          .eq('status', 'pending')
+          .order('requested_at', { ascending: false })
+
+        if (resetError) throw resetError
+
+        // Then get user details for each request
+        const result = await Promise.all(
+          resetData.map(async (reset: any) => {
+            // Get user details
+            const { data: userData } = await getSupabase()
+              .from('users')
+              .select('username, name')
+              .eq('id', reset.user_id)
+              .single()
+
+            // Get admin details
+            const { data: adminData } = await getSupabase()
+              .from('users')
+              .select('username, name')
+              .eq('id', reset.requested_by)
+              .single()
+
+            return {
+              id: reset.id,
+              userId: reset.user_id,
+              requestedBy: reset.requested_by,
+              requestedAt: reset.requested_at,
+              newPasswordHash: reset.new_password_hash,
+              isUsed: reset.is_used,
+              usedAt: reset.used_at,
+              status: reset.status,
+              userName: userData?.name || 'Unknown User',
+              adminName: adminData?.name || 'Unknown Admin'
+            }
+          })
+        )
+
+        return result
+      } catch (error) {
+        console.error('Error fetching pending password resets:', error)
+        throw error
+      }
+    } else {
+      return []
+    }
+  }
+
+  async markPasswordResetAsUsed(resetId: string): Promise<void> {
+    if (this.isOnline) {
+      try {
+        const { error } = await getSupabase()
+          .from('password_reset_requests')
+          .update({
+            is_used: true,
+            used_at: new Date().toISOString(),
+            status: 'completed'
+          })
+          .eq('id', resetId)
+
+        if (error) throw error
+      } catch (error) {
+        console.error('Error marking password reset as used:', error)
+        throw error
+      }
+    } else {
+      throw new Error('Password reset update requires online connection')
+    }
+  }
+
+  async updateUserPassword(userId: string, newPassword: string): Promise<void> {
+    const newPasswordHash = await hashPassword(newPassword)
+    
+    if (this.isOnline) {
+      try {
+        // First get current user to increment the count
+        const { data: currentUser, error: fetchError } = await getSupabase()
+          .from('users')
+          .select('password_reset_count')
+          .eq('id', userId)
+          .single()
+
+        if (fetchError) throw fetchError
+
+        const { error } = await getSupabase()
+          .from('users')
+          .update({
+            password_hash: newPasswordHash,
+            last_password_reset: new Date().toISOString(),
+            password_reset_count: (currentUser?.password_reset_count || 0) + 1
+          })
+          .eq('id', userId)
+
+        if (error) throw error
+      } catch (error) {
+        console.error('Error updating user password:', error)
+        throw error
+      }
+    } else {
+      throw new Error('Password update requires online connection')
+    }
+  }
+
+  async generateSecurePassword(length: number = 12): Promise<string> {
+    if (this.isOnline) {
+      try {
+        const { data, error } = await getSupabase()
+          .rpc('generate_secure_password', { length })
+
+        if (error) throw error
+        return data
+      } catch (error) {
+        console.error('Error generating secure password:', error)
+        // Fallback to client-side generation
+        return this.generateClientSidePassword(length)
+      }
+    } else {
+      return this.generateClientSidePassword(length)
+    }
+  }
+
+  private generateClientSidePassword(length: number = 12): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*'
+    let result = ''
+    for (let i = 0; i < length; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+    return result
+  }
+
+  async getUserPasswordResetHistory(userId: string): Promise<PasswordResetRequest[]> {
+    if (this.isOnline) {
+      try {
+        const { data: resetData, error: resetError } = await getSupabase()
+          .from('password_reset_requests')
+          .select('*')
+          .eq('user_id', userId)
+          .order('requested_at', { ascending: false })
+
+        if (resetError) throw resetError
+
+        // Get admin details for each request
+        const result = await Promise.all(
+          resetData.map(async (reset: any) => {
+            // Get admin details
+            const { data: adminData } = await getSupabase()
+              .from('users')
+              .select('username, name')
+              .eq('id', reset.requested_by)
+              .single()
+
+            return {
+              id: reset.id,
+              userId: reset.user_id,
+              requestedBy: reset.requested_by,
+              requestedAt: reset.requested_at,
+              newPasswordHash: reset.new_password_hash,
+              isUsed: reset.is_used,
+              usedAt: reset.used_at,
+              status: reset.status,
+              adminName: adminData?.name || 'Unknown Admin'
+            }
+          })
+        )
+
+        return result
+      } catch (error) {
+        console.error('Error fetching user password reset history:', error)
+        throw error
+      }
+    } else {
+      return []
+    }
+  }
 
 }
 

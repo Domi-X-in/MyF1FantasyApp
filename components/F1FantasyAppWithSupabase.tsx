@@ -264,6 +264,14 @@ export default function F1FantasyAppWithSupabase() {
   });
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   
+  // Password reset states
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [pendingPasswordResets, setPendingPasswordResets] = useState<any[]>([]);
+  const [selectedUserForReset, setSelectedUserForReset] = useState<string>("");
+  const [newPasswordForReset, setNewPasswordForReset] = useState("");
+  const [confirmPasswordForReset, setConfirmPasswordForReset] = useState("");
+  const [isProcessingPasswordReset, setIsProcessingPasswordReset] = useState(false);
+  
   // Prediction states
   const [currentPrediction, setCurrentPrediction] = useState<Positions>({ first: "", second: "", third: "" });
   const [isEditingPrediction, setIsEditingPrediction] = useState(false);
@@ -288,6 +296,7 @@ export default function F1FantasyAppWithSupabase() {
     { key: 'addResults', label: 'Results' },
     { key: 'users', label: 'Users' },
     { key: 'backfill', label: 'Backfill' },
+    { key: 'passwordResets', label: 'Password Resets' },
   ];
 
   // Additional admin state variables
@@ -833,12 +842,28 @@ export default function F1FantasyAppWithSupabase() {
 
 
   // Admin functions
-  const loginAdmin = () => {
+  const loginAdmin = async () => {
     if (adminUsername === ADMIN_CREDENTIALS.username && adminPassword === ADMIN_CREDENTIALS.password) {
-      setIsAdminLoggedIn(true);
-      setAdminUsername("");
-      setAdminPassword("");
-      setShowAdminLogin(false);
+      try {
+        setIsLoading(true);
+        // Authenticate admin through the data service to get proper user data
+        const adminUser = await dataService.instance.loginUser(adminUsername, adminPassword);
+        
+        if (adminUser) {
+          setCurrentUser(adminUser);
+          setIsAdminLoggedIn(true);
+          setAdminUsername("");
+          setAdminPassword("");
+          setShowAdminLogin(false);
+        } else {
+          alert("Invalid admin credentials!");
+        }
+      } catch (error) {
+        console.error('Error logging in as admin:', error);
+        alert("Error logging in as admin. Please try again.");
+      } finally {
+        setIsLoading(false);
+      }
     } else {
       alert("Invalid credentials!");
     }
@@ -846,6 +871,7 @@ export default function F1FantasyAppWithSupabase() {
 
   const logoutAdmin = () => {
     setIsAdminLoggedIn(false);
+    setCurrentUser(null);
   };
 
   // Admin handler functions
@@ -1183,6 +1209,13 @@ export default function F1FantasyAppWithSupabase() {
     }
   }, [races, users]);
 
+  // Load pending password resets when admin tab changes to password resets
+  useEffect(() => {
+    if (isAdminLoggedIn && adminTab === 'passwordResets') {
+      loadPendingPasswordResets();
+    }
+  }, [isAdminLoggedIn, adminTab]);
+
   // After: const [users, setUsers] = useState<User[]>([]);
   const filteredUsers = users.filter(
     user => user.username && user.username.trim().toLowerCase() !== "admin"
@@ -1205,6 +1238,90 @@ export default function F1FantasyAppWithSupabase() {
       console.error(error);
     } finally {
       setIsRecalculatingScores(false);
+    }
+  };
+
+  // Password Reset Functions
+  const loadPendingPasswordResets = async () => {
+    try {
+      const resets = await dataService.instance.getPendingPasswordResets();
+      setPendingPasswordResets(resets);
+    } catch (error) {
+      console.error('Error loading pending password resets:', error);
+    }
+  };
+
+  const handleGeneratePassword = async () => {
+    try {
+      const generatedPassword = await dataService.instance.generateSecurePassword(12);
+      setNewPasswordForReset(generatedPassword);
+      setConfirmPasswordForReset(generatedPassword);
+    } catch (error) {
+      console.error('Error generating password:', error);
+      alert('Error generating password. Please try again.');
+    }
+  };
+
+  const handleCreatePasswordReset = async () => {
+    if (!selectedUserForReset) {
+      alert('Please select a user.');
+      return;
+    }
+    if (!newPasswordForReset || !confirmPasswordForReset) {
+      alert('Please fill in both password fields.');
+      return;
+    }
+    if (newPasswordForReset !== confirmPasswordForReset) {
+      alert('Passwords do not match.');
+      return;
+    }
+    if (newPasswordForReset.length < 6) {
+      alert('Password must be at least 6 characters long.');
+      return;
+    }
+    if (!currentUser?.id) {
+      alert('Admin session not found. Please log in as admin.');
+      return;
+    }
+
+    try {
+      setIsProcessingPasswordReset(true);
+      
+      // Create password reset request
+      await dataService.instance.createPasswordResetRequest(
+        selectedUserForReset,
+        newPasswordForReset,
+        currentUser.id
+      );
+
+      // Update user's password
+      await dataService.instance.updateUserPassword(selectedUserForReset, newPasswordForReset);
+
+      alert(`Password reset created successfully!\n\nNew password: ${newPasswordForReset}\n\nPlease communicate this password securely to the user.`);
+      
+      // Reset form
+      setSelectedUserForReset("");
+      setNewPasswordForReset("");
+      setConfirmPasswordForReset("");
+      
+      // Reload pending resets
+      await loadPendingPasswordResets();
+    } catch (error) {
+      console.error('Error creating password reset:', error);
+      alert('Error creating password reset. Please try again.');
+    } finally {
+      setIsProcessingPasswordReset(false);
+    }
+  };
+
+  const handleMarkResetAsUsed = async (resetId: string) => {
+    try {
+      await dataService.instance.markPasswordResetAsUsed(resetId);
+      await loadPendingPasswordResets();
+      alert('Password reset marked as completed.');
+    } catch (error) {
+      console.error('Error marking reset as used:', error);
+      alert('Error updating reset status. Please try again.');
     }
   };
 
@@ -1592,6 +1709,15 @@ export default function F1FantasyAppWithSupabase() {
                           <Button onClick={loginUser} className="w-full bg-red-600 hover:bg-red-700 text-white">
                             Login
                           </Button>
+                          <div className="text-center mt-3">
+                            <button
+                              type="button"
+                              onClick={() => setShowForgotPassword(true)}
+                              className="text-sm text-red-600 hover:text-red-700 underline"
+                            >
+                              Forgot Password? Contact Admin
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         // Registration Form
@@ -2085,10 +2211,62 @@ export default function F1FantasyAppWithSupabase() {
                   </div>
                 )}
 
-                {/* Random Driver-Car Pair */}
-                <DriverCarPair pair={tabPairs["fantasy"] || null} />
-              </div>
-            )}
+                                    {/* Random Driver-Car Pair */}
+                    <DriverCarPair pair={tabPairs["fantasy"] || null} />
+                  </div>
+                )}
+
+                {/* Forgot Password Modal */}
+                {showForgotPassword && (
+                  <Card className="bg-white border border-gray-200 shadow-sm">
+                    <CardContent className="p-6">
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-semibold text-gray-900">🔐 Forgot Password</h3>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={() => setShowForgotPassword(false)}
+                          className="border-gray-300 text-gray-600 hover:bg-gray-50"
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                      
+                      <div className="space-y-4">
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                          <h4 className="font-semibold text-blue-800 mb-2">Contact Admin for Password Reset</h4>
+                          <p className="text-blue-700 text-sm mb-3">
+                            If you've forgotten your password, please contact the administrator to reset it for you.
+                          </p>
+                          <div className="space-y-2 text-sm">
+                            <div className="flex items-center space-x-2">
+                              <span className="font-medium text-blue-800">Admin Contact:</span>
+                              <span className="text-blue-700">Contact the app administrator</span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <span className="font-medium text-blue-800">Process:</span>
+                              <span className="text-blue-700">Admin will verify your identity and reset your password</span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <span className="font-medium text-blue-800">Security:</span>
+                              <span className="text-blue-700">New password will be securely communicated to you</span>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                          <h4 className="font-semibold text-yellow-800 mb-2">⚠️ Important Notes</h4>
+                          <ul className="text-yellow-700 text-sm space-y-1">
+                            <li>• Make sure to provide your username when contacting admin</li>
+                            <li>• Admin will verify your identity before resetting password</li>
+                            <li>• New password will be temporary - change it after first login</li>
+                            <li>• Keep your new password secure and don't share it</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
             {activeTab === "ranking" && (
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
@@ -2826,7 +3004,7 @@ export default function F1FantasyAppWithSupabase() {
                           <form className="space-y-3" onSubmit={e => { e.preventDefault(); addRaceResults(); }}>
                             <select value={selectedRaceForResults} onChange={e => setSelectedRaceForResults(e.target.value)} className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600">
                               <option value="">Select a race</option>
-                              {races.filter(r => !r.isCompleted && new Date(r.date) <= new Date()).map(race => (
+                              {races.filter(r => new Date(r.date) <= new Date() && !r.results).map(race => (
                                 <option key={race.id} value={race.id}>{race.name} - {formatDate(race.date)}</option>
                               ))}
                             </select>
@@ -3026,6 +3204,155 @@ export default function F1FantasyAppWithSupabase() {
                           </form>
                         </CardContent>
                       </Card>
+                    )}
+
+                                        {adminTab === 'passwordResets' && (
+                      <div className="space-y-6">
+                        {!isAdminLoggedIn || !currentUser?.id ? (
+                          <Card className="bg-white border border-gray-200 shadow-sm">
+                            <CardContent className="p-6 text-center">
+                              <p className="text-gray-600">Please log in as admin to access password reset functionality.</p>
+                            </CardContent>
+                          </Card>
+                        ) : (
+                          <>
+                            {/* Create Password Reset */}
+                            <Card className="bg-white border border-gray-200 shadow-sm">
+                          <CardContent className="p-6 space-y-4">
+                            <h3 className="text-lg font-semibold text-gray-900 mb-2">Reset User Password</h3>
+                            
+                            <form className="space-y-3" onSubmit={e => { e.preventDefault(); handleCreatePasswordReset(); }}>
+                              <select 
+                                className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600" 
+                                value={selectedUserForReset} 
+                                onChange={e => setSelectedUserForReset(e.target.value)}
+                              >
+                                <option value="">Select User</option>
+                                {filteredUsers.map(user => (
+                                  <option key={user.id} value={user.id}>
+                                    {user.username} ({user.name})
+                                  </option>
+                                ))}
+                              </select>
+                              
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                <Input 
+                                  value={newPasswordForReset} 
+                                  onChange={e => setNewPasswordForReset(e.target.value)} 
+                                  placeholder="New Password" 
+                                  type="password"
+                                  className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                                />
+                                <Input 
+                                  value={confirmPasswordForReset} 
+                                  onChange={e => setConfirmPasswordForReset(e.target.value)} 
+                                  placeholder="Confirm Password" 
+                                  type="password"
+                                  className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                                />
+                              </div>
+                              
+                              <div className="flex gap-2">
+                                <Button 
+                                  type="button"
+                                  onClick={handleGeneratePassword}
+                                  variant="outline"
+                                  className="border-blue-600 text-blue-600 hover:bg-blue-50"
+                                >
+                                  Generate Secure Password
+                                </Button>
+                                <Button 
+                                  type="submit" 
+                                  className="flex-1 bg-[#E10800] text-white hover:bg-red-800 font-medium"
+                                  disabled={isProcessingPasswordReset}
+                                >
+                                  {isProcessingPasswordReset ? (
+                                    <>
+                                      <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></span>
+                                      Processing...
+                                    </>
+                                  ) : (
+                                    'Reset Password'
+                                  )}
+                                </Button>
+                              </div>
+                            </form>
+                          </CardContent>
+                        </Card>
+
+                        {/* Pending Password Resets */}
+                        <Card className="bg-white border border-gray-200 shadow-sm">
+                          <CardContent className="p-6 space-y-4">
+                            <div className="flex justify-between items-center">
+                              <h3 className="text-lg font-semibold text-gray-900 mb-2">Pending Password Resets</h3>
+                              <Button 
+                                onClick={loadPendingPasswordResets}
+                                variant="outline"
+                                size="sm"
+                                className="border-gray-300 text-gray-700 hover:bg-gray-50"
+                              >
+                                Refresh
+                              </Button>
+                            </div>
+                            
+                            {pendingPasswordResets.length === 0 ? (
+                              <div className="text-center py-8">
+                                <p className="text-gray-600">No pending password resets.</p>
+                              </div>
+                            ) : (
+                              <div className="overflow-x-auto">
+                                <table className="min-w-full text-xs border">
+                                  <thead>
+                                    <tr className="bg-gray-100">
+                                      <th className="px-2 py-1 text-left">User</th>
+                                      <th className="px-2 py-1 text-left">Requested By</th>
+                                      <th className="px-2 py-1 text-left">Date</th>
+                                      <th className="px-2 py-1 text-left">Status</th>
+                                      <th className="px-2 py-1 text-left">Actions</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {pendingPasswordResets.map((reset: any) => (
+                                      <tr key={reset.id} className="border-b">
+                                        <td className="px-2 py-1">
+                                          <div className="font-medium">{reset.userName}</div>
+                                          <div className="text-gray-500 text-xs">@{reset.userId}</div>
+                                        </td>
+                                        <td className="px-2 py-1">{reset.adminName}</td>
+                                        <td className="px-2 py-1">{formatDate(reset.requestedAt)}</td>
+                                        <td className="px-2 py-1">
+                                          <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                            reset.status === 'pending' 
+                                              ? 'bg-yellow-100 text-yellow-800' 
+                                              : reset.status === 'completed'
+                                              ? 'bg-green-100 text-green-800'
+                                              : 'bg-red-100 text-red-800'
+                                          }`}>
+                                            {reset.status}
+                                          </span>
+                                        </td>
+                                        <td className="px-2 py-1">
+                                          {reset.status === 'pending' && (
+                                            <Button 
+                                              size="sm" 
+                                              className="bg-green-600 hover:bg-green-700 text-white font-medium"
+                                              onClick={() => handleMarkResetAsUsed(reset.id)}
+                                            >
+                                              Mark Complete
+                                            </Button>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                          </>
+                        )}
+                      </div>
                     )}
 
 
