@@ -309,7 +309,9 @@ export default function F1FantasyAppWithSupabase() {
   const [backfillPrediction, setBackfillPrediction] = useState<Positions>({ first: "", second: "", third: "" });
   
   // New state variables for unified Backfill UI
-  const [currentOperation, setCurrentOperation] = useState<'add' | 'edit' | null>(null);
+  const [currentOperation, setCurrentOperation] = useState<'add' | 'edit' | 'delete' | 'editing' | null>(null);
+  const [predictionToDelete, setPredictionToDelete] = useState<{ userId: string; raceId: string; prediction: Positions; userName: string; raceName: string } | null>(null);
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   
   // File input ref for CSV import
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -968,7 +970,7 @@ export default function F1FantasyAppWithSupabase() {
     const existingPrediction = races.find(r => r.id === raceId)?.predictions[selectedUserId!];
     
     if (existingPrediction) {
-      // Edit mode: populate with existing values
+      // Edit/Delete mode: populate with existing values
       setBackfillPrediction({
         first: existingPrediction.first,
         second: existingPrediction.second,
@@ -987,6 +989,8 @@ export default function F1FantasyAppWithSupabase() {
     setSelectedRaceId(null);
     setBackfillPrediction({ first: "", second: "", third: "" });
     setCurrentOperation(null);
+    setPredictionToDelete(null);
+    setShowDeleteConfirmation(false);
   };
 
   const handleBackfillPrediction = async () => {
@@ -1012,6 +1016,65 @@ export default function F1FantasyAppWithSupabase() {
       console.error('Error handling prediction:', error);
       alert("Error saving prediction. Please try again.");
     }
+  };
+
+  const handleEditPrediction = () => {
+    setCurrentOperation('editing');
+  };
+
+  const handleCancelEdit = () => {
+    setCurrentOperation('edit');
+    // Restore original prediction values
+    const existingPrediction = races.find(r => r.id === selectedRaceId)?.predictions[selectedUserId!];
+    if (existingPrediction) {
+      setBackfillPrediction({
+        first: existingPrediction.first,
+        second: existingPrediction.second,
+        third: existingPrediction.third
+      });
+    }
+  };
+
+  const handleDeletePrediction = () => {
+    const selectedUser = users.find(u => u.id === selectedUserId);
+    const selectedRace = races.find(r => r.id === selectedRaceId);
+    
+    if (selectedUser && selectedRace) {
+      setPredictionToDelete({
+        userId: selectedUserId!,
+        raceId: selectedRaceId!,
+        prediction: backfillPrediction,
+        userName: selectedUser.username,
+        raceName: selectedRace.name
+      });
+      setShowDeleteConfirmation(true);
+    }
+  };
+
+  const confirmDeletePrediction = async () => {
+    if (!predictionToDelete) return;
+    
+    try {
+      await dataService.instance.deletePrediction(predictionToDelete.userId, predictionToDelete.raceId);
+      
+      alert(`Prediction deleted successfully!`);
+      
+      // Reset form and close modal
+      setShowDeleteConfirmation(false);
+      setPredictionToDelete(null);
+      resetBackfillForm();
+      
+      // Reload data to update the race list
+      await loadData();
+    } catch (error) {
+      console.error('Error deleting prediction:', error);
+      alert("Error deleting prediction. Please try again.");
+    }
+  };
+
+  const cancelDeletePrediction = () => {
+    setShowDeleteConfirmation(false);
+    setPredictionToDelete(null);
   };
 
   // Remove Race
@@ -3138,9 +3201,15 @@ export default function F1FantasyAppWithSupabase() {
                           {/* Operation Status Indicator */}
                           {currentOperation && (
                             <div className={`text-sm font-medium p-2 rounded-md ${
-                              currentOperation === 'edit' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-green-50 text-green-700 border border-green-200'
+                              currentOperation === 'add' ? 'bg-green-50 text-green-700 border border-green-200' :
+                              currentOperation === 'edit' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                              currentOperation === 'editing' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                              'bg-red-50 text-red-700 border border-red-200'
                             }`}>
-                              {currentOperation === 'edit' ? '✏️ Editing existing prediction' : '➕ Adding new prediction'}
+                              {currentOperation === 'add' ? '➕ Adding new prediction' :
+                               currentOperation === 'edit' ? '✏️ Edit or 🗑️ Delete existing prediction' :
+                               currentOperation === 'editing' ? '✏️ Editing prediction' :
+                               '🗑️ Deleting prediction'}
                             </div>
                           )}
                           
@@ -3162,7 +3231,7 @@ export default function F1FantasyAppWithSupabase() {
                               <option value="">Select Race</option>
                               {getCompletedRaces().filter(r => selectedUserId).map(r => {
                                 const hasPrediction = r.predictions[selectedUserId!];
-                                const status = hasPrediction ? "✏️ Edit" : "➕ Add";
+                                const status = hasPrediction ? "✏️ Edit or 🗑️ Delete" : "➕ Add";
                                 return (
                                   <option key={r.id} value={r.id}>
                                     {status} - {r.name} ({formatDate(r.date)})
@@ -3172,24 +3241,77 @@ export default function F1FantasyAppWithSupabase() {
                             </select>
                             
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                              <select value={backfillPrediction.first} onChange={e => setBackfillPrediction(p => ({ ...p, first: e.target.value }))} className="p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600">
+                              <select 
+                                value={backfillPrediction.first} 
+                                onChange={e => setBackfillPrediction(p => ({ ...p, first: e.target.value }))} 
+                                className="p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600"
+                                disabled={currentOperation === 'edit'}
+                              >
                                 <option value="">1st Place</option>
                                 {drivers.map(driver => <option key={driver.code} value={driver.code}>{driver.name}</option>)}
                               </select>
-                              <select value={backfillPrediction.second} onChange={e => setBackfillPrediction(p => ({ ...p, second: e.target.value }))} className="p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600">
+                              <select 
+                                value={backfillPrediction.second} 
+                                onChange={e => setBackfillPrediction(p => ({ ...p, second: e.target.value }))} 
+                                className="p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600"
+                                disabled={currentOperation === 'edit'}
+                              >
                                 <option value="">2nd Place</option>
                                 {drivers.map(driver => <option key={driver.code} value={driver.code}>{driver.name}</option>)}
                               </select>
-                              <select value={backfillPrediction.third} onChange={e => setBackfillPrediction(p => ({ ...p, third: e.target.value }))} className="p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600">
+                              <select 
+                                value={backfillPrediction.third} 
+                                onChange={e => setBackfillPrediction(p => ({ ...p, third: e.target.value }))} 
+                                className="p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600"
+                                disabled={currentOperation === 'edit'}
+                              >
                                 <option value="">3rd Place</option>
                                 {drivers.map(driver => <option key={driver.code} value={driver.code}>{driver.name}</option>)}
                               </select>
                             </div>
                             
                             <div className="flex gap-2">
-                              <Button type="submit" className="flex-1 bg-[#E10800] text-white hover:bg-red-800 font-medium">
-                                {currentOperation === 'edit' ? 'Update Prediction' : 'Save Prediction'}
-                              </Button>
+                              {currentOperation === 'add' && (
+                                <Button type="submit" className="flex-1 bg-[#E10800] text-white hover:bg-red-800 font-medium">
+                                  Save Prediction
+                                </Button>
+                              )}
+                              
+                              {currentOperation === 'edit' && (
+                                <>
+                                  <Button 
+                                    type="button" 
+                                    onClick={handleEditPrediction}
+                                    className="flex-1 bg-blue-600 text-white hover:bg-blue-700 font-medium"
+                                  >
+                                    ✏️ Edit Prediction
+                                  </Button>
+                                  <Button 
+                                    type="button" 
+                                    onClick={handleDeletePrediction}
+                                    className="flex-1 bg-red-600 text-white hover:bg-red-700 font-medium"
+                                  >
+                                    🗑️ Delete Prediction
+                                  </Button>
+                                </>
+                              )}
+                              
+                              {currentOperation === 'editing' && (
+                                <>
+                                  <Button type="submit" className="flex-1 bg-[#E10800] text-white hover:bg-red-800 font-medium">
+                                    Update Prediction
+                                  </Button>
+                                  <Button 
+                                    type="button" 
+                                    variant="outline" 
+                                    onClick={handleCancelEdit}
+                                    className="flex-1 border-red-600 text-red-600 hover:bg-red-50"
+                                  >
+                                    Cancel Edit
+                                  </Button>
+                                </>
+                              )}
+                              
                               {(selectedUserId || selectedRaceId) && (
                                 <Button 
                                   type="button" 
@@ -3206,7 +3328,61 @@ export default function F1FantasyAppWithSupabase() {
                       </Card>
                     )}
 
-                                        {adminTab === 'passwordResets' && (
+                    {/* Delete Confirmation Modal */}
+                    {showDeleteConfirmation && predictionToDelete && (
+                      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                        <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+                          <h3 className="text-lg font-semibold text-gray-900 mb-4">Confirm Delete Prediction</h3>
+                          
+                          <div className="space-y-3 mb-6">
+                            <div>
+                              <span className="font-medium text-gray-700">User:</span>
+                              <span className="ml-2 text-gray-900">{predictionToDelete.userName}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium text-gray-700">Race:</span>
+                              <span className="ml-2 text-gray-900">{predictionToDelete.raceName}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium text-gray-700">Current Prediction:</span>
+                              <div className="ml-2 mt-1 space-y-1">
+                                <div className="text-sm text-gray-600">
+                                  1st: {getDriverName(predictionToDelete.prediction.first)}
+                                </div>
+                                <div className="text-sm text-gray-600">
+                                  2nd: {getDriverName(predictionToDelete.prediction.second)}
+                                </div>
+                                <div className="text-sm text-gray-600">
+                                  3rd: {getDriverName(predictionToDelete.prediction.third)}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="text-sm text-red-600 mb-6 p-3 bg-red-50 rounded-md">
+                            ⚠️ This action cannot be undone. The prediction will be permanently deleted.
+                          </div>
+                          
+                          <div className="flex gap-3">
+                            <Button 
+                              onClick={confirmDeletePrediction}
+                              className="flex-1 bg-red-600 text-white hover:bg-red-700 font-medium"
+                            >
+                              Confirm Delete
+                            </Button>
+                            <Button 
+                              onClick={cancelDeletePrediction}
+                              variant="outline"
+                              className="flex-1 border-gray-300 text-gray-700 hover:bg-gray-50"
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {adminTab === 'passwordResets' && (
                       <div className="space-y-6">
                         {!isAdminLoggedIn || !currentUser?.id ? (
                           <Card className="bg-white border border-gray-200 shadow-sm">

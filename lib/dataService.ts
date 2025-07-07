@@ -60,7 +60,7 @@ export interface AuthSession {
 
 export interface OfflineAction {
   id: string
-  type: 'CREATE_USER' | 'UPDATE_USER' | 'DELETE_USER' | 'CREATE_RACE' | 'UPDATE_RACE' | 'DELETE_RACE' | 'CREATE_PREDICTION' | 'UPDATE_PREDICTION' | 'CREATE_PASSWORD_RESET' | 'UPDATE_PASSWORD_RESET'
+  type: 'CREATE_USER' | 'UPDATE_USER' | 'DELETE_USER' | 'CREATE_RACE' | 'UPDATE_RACE' | 'DELETE_RACE' | 'CREATE_PREDICTION' | 'UPDATE_PREDICTION' | 'DELETE_PREDICTION' | 'CREATE_PASSWORD_RESET' | 'UPDATE_PASSWORD_RESET'
   data: any
   timestamp: number
 }
@@ -781,6 +781,37 @@ export class DataService {
     }
   }
 
+  async deletePrediction(userId: string, raceId: string): Promise<void> {
+    if (this.isOnline) {
+      try {
+        const { error } = await getSupabase()
+          .from('predictions')
+          .delete()
+          .eq('user_id', userId)
+          .eq('race_id', raceId)
+
+        if (error) throw error
+      } catch (error) {
+        console.error('Error deleting prediction:', error)
+        throw error
+      }
+    } else {
+      // Queue for sync
+      this.offlineQueue.addAction({
+        type: 'DELETE_PREDICTION',
+        data: { userId, raceId }
+      })
+    }
+
+    // Update local cache
+    const localRaces = getLocalData('races', [])
+    const raceIndex = localRaces.findIndex((r: Race) => r.id === raceId)
+    if (raceIndex !== -1) {
+      delete localRaces[raceIndex].predictions[userId]
+      setLocalData('races', localRaces)
+    }
+  }
+
   // Offline queue processing
   private async processOfflineQueue() {
     if (this.syncInProgress || !this.isOnline) return
@@ -823,6 +854,9 @@ export class DataService {
             break
           case 'UPDATE_PASSWORD_RESET':
             await this.markPasswordResetAsUsed(action.data.resetId)
+            break
+          case 'DELETE_PREDICTION':
+            await this.deletePrediction(action.data.userId, action.data.raceId)
             break
         }
         this.offlineQueue.removeAction(action.id)
