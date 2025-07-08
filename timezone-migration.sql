@@ -95,10 +95,10 @@ UPDATE races
 SET 
     timezone = get_timezone_for_city(city),
     race_time = CASE 
-        WHEN LOWER(city) IN ('singapore', 'bahrain', 'qatar', 'abu dhabi') THEN '20:00:00'  -- Night races
-        WHEN LOWER(city) IN ('las vegas') THEN '22:00:00'  -- Late night race
-        WHEN LOWER(city) IN ('australia', 'japan', 'china') THEN '14:00:00'  -- Early for European TV
-        ELSE '15:00:00'  -- Standard European afternoon time
+        WHEN LOWER(city) IN ('singapore', 'bahrain', 'qatar', 'abu dhabi') THEN '20:00:00'::TIME  -- Night races
+        WHEN LOWER(city) IN ('las vegas') THEN '22:00:00'::TIME  -- Late night race
+        WHEN LOWER(city) IN ('australia', 'japan', 'china') THEN '14:00:00'::TIME  -- Early for European TV
+        ELSE '15:00:00'::TIME  -- Standard European afternoon time
     END,
     country = CASE LOWER(city)
         WHEN 'melbourne' THEN 'Australia'
