@@ -9,6 +9,14 @@ import { Trophy, Car, BookOpen, Crown, Star, LogIn, LogOut, History, Wifi, WifiO
 import { dataService, User, Race, Positions } from "@/lib/dataService";
 import { useRouter } from "next/navigation";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { 
+  getHeaderBackgroundColor, 
+  getHeaderBorderColor, 
+  getNavigationBackgroundColor, 
+  getNavigationBorderColor, 
+  getActiveNavigationBackgroundColor, 
+  getHoverNavigationBackgroundColor 
+} from "@/lib/environment";
 
 // Driver data
 const drivers = [
@@ -1705,7 +1713,7 @@ export default function F1FantasyAppWithSupabase() {
       {isClient && (
         <>
           {/* Header */}
-          <header className="bg-[#E10800] p-4 border-b border-red-800 shadow-lg">
+          <header className={`${getHeaderBackgroundColor()} p-4 border-b ${getHeaderBorderColor()} shadow-lg`}>
             <div className="flex justify-between items-center">
               <div className="flex items-center justify-center w-full">
                 <img
@@ -3542,15 +3550,15 @@ export default function F1FantasyAppWithSupabase() {
           </div>
 
           {/* Bottom Navigation */}
-          <nav className="fixed bottom-0 left-0 right-0 bg-[#E10800] border-t border-red-800 shadow-lg z-50">
+          <nav className={`fixed bottom-0 left-0 right-0 ${getNavigationBackgroundColor()} border-t ${getNavigationBorderColor()} shadow-lg z-50`}>
             <div className="flex">
               {navTabs.map(tab => (
                 <button
                   key={tab.key}
                   className={`flex-1 flex flex-col items-center py-3 px-2 transition-colors ${
                     activeTab === tab.key
-                      ? "text-white bg-red-800"
-                      : "text-white/80 hover:text-white hover:bg-red-800/50"
+                      ? `text-white ${getActiveNavigationBackgroundColor()}`
+                      : `text-white/80 hover:text-white ${getHoverNavigationBackgroundColor()}`
                   }`}
                   onClick={() => setActiveTab(tab.key as any)}
                 >

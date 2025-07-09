@@ -1,12 +1,18 @@
 import { createClient } from '@supabase/supabase-js'
+import { getEnvironmentConfig, logEnvironmentInfo } from './environment'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+// Get environment configuration
+const config = getEnvironmentConfig()
 
 // Only create client if environment variables are available
-export const supabase = supabaseUrl && supabaseAnonKey 
-  ? createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = config.supabaseUrl && config.supabaseKey 
+  ? createClient(config.supabaseUrl, config.supabaseKey)
   : null
+
+// Log environment for debugging (only in development)
+if (process.env.NODE_ENV === 'development') {
+  logEnvironmentInfo()
+}
 
 // Database types
 export interface Database {

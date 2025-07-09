@@ -1,6 +1,7 @@
 "use client";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { getHeaderBackgroundColor } from "@/lib/environment";
 
 export default function DriversPage() {
   const router = useRouter();
@@ -10,7 +11,7 @@ export default function DriversPage() {
 
   return (
     <div
-      className="min-h-screen w-full bg-[#E10800] flex flex-col items-center justify-center cursor-pointer select-none"
+      className={`min-h-screen w-full ${getHeaderBackgroundColor()} flex flex-col items-center justify-center cursor-pointer select-none`}
       onClick={handleClick}
     >
       <Image
