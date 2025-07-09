@@ -3900,8 +3900,8 @@ export default function F1FantasyAppWithSupabase() {
                                   className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600"
                                 >
                                   <option value="">Select timezone</option>
-                                  {Object.entries(TimezoneHelpers.timezoneOptions).map(([value, label]) => (
-                                    <option key={value} value={value}>{label}</option>
+                                  {TimezoneHelpers.getF1TimezoneOptions().map((option) => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
                                   ))}
                                 </select>
                               </div>
@@ -3938,15 +3938,14 @@ export default function F1FantasyAppWithSupabase() {
                               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                                 <div className="text-sm font-medium text-blue-800 mb-1">🕐 Timezone Preview</div>
                                 <div className="text-sm text-blue-700">
-                                  {(() => {
-                                    try {
-                                      const utcTime = TimezoneHelpers.calculateRaceDatetimeUtc(
-                                        editRaceData.date, 
-                                        editRaceData.raceTime, 
-                                        editRaceData.timezone
-                                      );
-                                      const raceTime = new Date(utcTime);
-                                      const offset = TimezoneHelpers.getTimezoneOffset(editRaceData.timezone);
+                                                                     {(() => {
+                                     try {
+                                       const raceTime = TimezoneHelpers.calculateUTCTime(
+                                         editRaceData.date, 
+                                         editRaceData.raceTime, 
+                                         editRaceData.timezone
+                                       );
+                                       const offset = '+00:00'; // Placeholder for timezone offset
                                       
                                       return (
                                         <div className="space-y-1">
