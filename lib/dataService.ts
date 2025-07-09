@@ -33,6 +33,37 @@ export interface Race {
   }
   predictions: { [userId: string]: { first: string; second: string; third: string } }
   starWinners?: string[]
+  // New timezone-aware fields
+  raceTime?: string        // Local race time (e.g., "15:00")
+  timezone?: string        // IANA timezone (e.g., "Europe/Monaco")
+  raceDatetimeUtc?: string // UTC timestamp for consistent comparison
+  country?: string         // Country name
+  circuitName?: string     // Official circuit name
+}
+
+// Enhanced race creation interface
+export interface CreateRaceRequest {
+  name: string
+  city: string
+  date: string
+  raceTime?: string
+  timezone?: string
+  country?: string
+  circuitName?: string
+}
+
+// Race with timezone details
+export interface RaceWithTimezone extends Race {
+  timezonePreview?: {
+    [timezone: string]: string // timezone -> formatted time string
+  }
+}
+
+// Timezone option for selectors
+export interface TimezoneOption {
+  value: string
+  label: string
+  offset: string
 }
 
 export interface Positions {
@@ -102,6 +133,213 @@ const getLocalData = (key: string, defaultValue: any): any => {
 const setLocalData = (key: string, data: any): void => {
   if (typeof window === "undefined") return
   localStorage.setItem(key, JSON.stringify(data))
+}
+
+// Timezone utility functions
+export class TimezoneHelpers {
+  // F1 circuit timezone mappings
+  static readonly CITY_TIMEZONE_MAP: { [key: string]: string } = {
+    'melbourne': 'Australia/Melbourne',
+    'suzuka': 'Asia/Tokyo',
+    'shanghai': 'Asia/Shanghai',
+    'monaco': 'Europe/Monaco',
+    'silverstone': 'Europe/London',
+    'spa': 'Europe/Brussels',
+    'monza': 'Europe/Rome',
+    'budapest': 'Europe/Budapest',
+    'zandvoort': 'Europe/Amsterdam',
+    'austin': 'America/Chicago',
+    'mexico city': 'America/Mexico_City',
+    'sao paulo': 'America/Sao_Paulo',
+    'las vegas': 'America/Las_Vegas',
+    'singapore': 'Asia/Singapore',
+    'baku': 'Asia/Baku',
+    'manama': 'Asia/Bahrain',
+    'doha': 'Asia/Qatar',
+    'abu dhabi': 'Asia/Dubai',
+    'miami': 'America/New_York',
+    'imola': 'Europe/Rome',
+    'spielberg': 'Europe/Vienna',
+    'jeddah': 'Asia/Riyadh',
+    'montreal': 'America/Toronto',
+    'barcelona': 'Europe/Madrid'
+  }
+
+  // Simplified timezone offset mappings (for basic calculations)
+  static readonly TIMEZONE_OFFSETS: { [key: string]: number } = {
+    'Australia/Melbourne': 11,
+    'Asia/Tokyo': 9,
+    'Asia/Shanghai': 8,
+    'Europe/Monaco': 2,
+    'Europe/London': 1,
+    'America/New_York': -4,
+    'America/Los_Angeles': -7,
+    'Asia/Bahrain': 3,
+    'Asia/Qatar': 3,
+    'Europe/Rome': 2,
+    'Europe/Budapest': 2,
+    'Europe/Brussels': 2,
+    'Europe/Amsterdam': 2,
+    'America/Mexico_City': -5,
+    'America/Sao_Paulo': -3,
+    'America/Las_Vegas': -8,
+    'Asia/Singapore': 8,
+    'Asia/Baku': 4,
+    'Asia/Dubai': 4,
+    'Europe/Vienna': 2,
+    'Asia/Riyadh': 3,
+    'America/Toronto': -4,
+    'Europe/Madrid': 2,
+    'America/Chicago': -5,
+    'UTC': 0
+  }
+
+  // Get F1-specific timezone options
+  static getF1TimezoneOptions(): TimezoneOption[] {
+    return [
+      { value: 'Australia/Melbourne', label: 'Melbourne (AEDT)', offset: '+11:00' },
+      { value: 'Asia/Tokyo', label: 'Japan (JST)', offset: '+09:00' },
+      { value: 'Asia/Shanghai', label: 'China (CST)', offset: '+08:00' },
+      { value: 'Europe/Monaco', label: 'Monaco (CET)', offset: '+02:00' },
+      { value: 'Europe/London', label: 'United Kingdom (GMT)', offset: '+01:00' },
+      { value: 'Europe/Rome', label: 'Italy (CET)', offset: '+02:00' },
+      { value: 'Europe/Budapest', label: 'Hungary (CET)', offset: '+02:00' },
+      { value: 'Europe/Brussels', label: 'Belgium (CET)', offset: '+02:00' },
+      { value: 'Europe/Amsterdam', label: 'Netherlands (CET)', offset: '+02:00' },
+      { value: 'Europe/Vienna', label: 'Austria (CET)', offset: '+02:00' },
+      { value: 'Europe/Madrid', label: 'Spain (CET)', offset: '+02:00' },
+      { value: 'America/New_York', label: 'USA East (EDT)', offset: '-04:00' },
+      { value: 'America/Chicago', label: 'USA Central (CDT)', offset: '-05:00' },
+      { value: 'America/Las_Vegas', label: 'Las Vegas (PDT)', offset: '-08:00' },
+      { value: 'America/Mexico_City', label: 'Mexico (CDT)', offset: '-05:00' },
+      { value: 'America/Sao_Paulo', label: 'Brazil (BRT)', offset: '-03:00' },
+      { value: 'America/Toronto', label: 'Canada (EDT)', offset: '-04:00' },
+      { value: 'Asia/Singapore', label: 'Singapore (SGT)', offset: '+08:00' },
+      { value: 'Asia/Baku', label: 'Azerbaijan (AZT)', offset: '+04:00' },
+      { value: 'Asia/Bahrain', label: 'Bahrain (AST)', offset: '+03:00' },
+      { value: 'Asia/Qatar', label: 'Qatar (AST)', offset: '+03:00' },
+      { value: 'Asia/Dubai', label: 'UAE (GST)', offset: '+04:00' },
+      { value: 'Asia/Riyadh', label: 'Saudi Arabia (AST)', offset: '+03:00' }
+    ]
+  }
+
+  // Get suggested timezone for a city
+  static getTimezoneForCity(city: string): string {
+    return this.CITY_TIMEZONE_MAP[city.toLowerCase()] || 'UTC'
+  }
+
+  // Calculate UTC datetime from local race time
+  static calculateUTCTime(date: string, time: string, timezone: string): Date {
+    const localDateTime = new Date(`${date}T${time}:00`)
+    const offset = this.TIMEZONE_OFFSETS[timezone] || 0
+    return new Date(localDateTime.getTime() - (offset * 60 * 60 * 1000))
+  }
+
+  // Get typical race start time for a region
+  static getTypicalRaceTime(timezone: string): string {
+    // Night races
+    if (['Asia/Singapore', 'Asia/Bahrain', 'Asia/Qatar', 'Asia/Dubai'].includes(timezone)) {
+      return '20:00'
+    }
+    // Late night race
+    if (timezone === 'America/Las_Vegas') {
+      return '22:00'
+    }
+    // Early races for European TV
+    if (['Australia/Melbourne', 'Asia/Tokyo', 'Asia/Shanghai'].includes(timezone)) {
+      return '14:00'
+    }
+    // Standard European afternoon
+    return '15:00'
+  }
+
+  // Preview race time in multiple timezones
+  static previewTimesInZones(utcTime: Date): { [timezone: string]: string } {
+    const commonZones = [
+      { key: 'UTC', offset: 0 },
+      { key: 'America/New_York', offset: -4 },
+      { key: 'Europe/London', offset: 1 },
+      { key: 'Europe/Rome', offset: 2 },
+      { key: 'Asia/Tokyo', offset: 9 },
+      { key: 'Australia/Melbourne', offset: 11 }
+    ]
+
+    const previews: { [timezone: string]: string } = {}
+    
+    commonZones.forEach(zone => {
+      const zoneTime = new Date(utcTime.getTime() + (zone.offset * 60 * 60 * 1000))
+      previews[zone.key] = zoneTime.toLocaleString('en-US', {
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      })
+    })
+
+    return previews
+  }
+
+  // Check if prediction is still allowed based on race start time
+  static isPredictionAllowed(race: Race): boolean {
+    const now = new Date()
+    
+    // Use timezone-aware calculation if available
+    if (race.raceDatetimeUtc) {
+      return now < new Date(race.raceDatetimeUtc)
+    }
+    
+    // Fallback to legacy midnight logic
+    const raceDate = new Date(race.date + 'T00:00:00')
+    return now < raceDate
+  }
+
+  // Get time until race start
+  static getTimeUntilRace(race: Race): {
+    totalSeconds: number
+    days: number
+    hours: number
+    minutes: number
+    seconds: number
+    isExpired: boolean
+  } {
+    const now = new Date().getTime()
+    let raceTime: number
+
+    if (race.raceDatetimeUtc) {
+      raceTime = new Date(race.raceDatetimeUtc).getTime()
+    } else {
+      // Fallback to legacy logic
+      raceTime = new Date(race.date + 'T00:00:00').getTime()
+    }
+
+    const difference = raceTime - now
+
+    if (difference <= 0) {
+      return {
+        totalSeconds: 0,
+        days: 0,
+        hours: 0,
+        minutes: 0,
+        seconds: 0,
+        isExpired: true
+      }
+    }
+
+    const totalSeconds = Math.floor(difference / 1000)
+    const days = Math.floor(difference / (1000 * 60 * 60 * 24))
+    const hours = Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+    const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60))
+    const seconds = Math.floor((difference % (1000 * 60)) / 1000)
+
+    return {
+      totalSeconds,
+      days,
+      hours,
+      minutes,
+      seconds,
+      isExpired: false
+    }
+  }
 }
 
 // Offline queue management
@@ -419,7 +657,13 @@ export class DataService {
             isCompleted: race.is_completed,
             results: race.results,
             predictions: racePredictions,
-            starWinners: race.star_winners
+            starWinners: race.star_winners,
+            // New timezone-aware fields
+            raceTime: race.race_time,
+            timezone: race.timezone,
+            raceDatetimeUtc: race.race_datetime_utc,
+            country: race.country,
+            circuitName: race.circuit_name
           }
         })
 
@@ -463,12 +707,27 @@ export class DataService {
     }
   }
 
-  async createRace(raceData: { name: string; city: string; date: string }): Promise<Race> {
+  async createRace(raceData: CreateRaceRequest): Promise<Race> {
+    // Auto-suggest timezone and race time if not provided
+    const timezone = raceData.timezone || TimezoneHelpers.getTimezoneForCity(raceData.city)
+    const raceTime = raceData.raceTime || TimezoneHelpers.getTypicalRaceTime(timezone)
+    
+    // Calculate UTC datetime
+    const raceDatetimeUtc = TimezoneHelpers.calculateUTCTime(raceData.date, raceTime, timezone)
+
     const newRace: Race = {
       id: Date.now().toString(),
-      ...raceData,
+      name: raceData.name,
+      city: raceData.city,
+      date: raceData.date,
       isCompleted: false,
-      predictions: {}
+      predictions: {},
+      // New timezone-aware fields
+      raceTime,
+      timezone,
+      raceDatetimeUtc: raceDatetimeUtc.toISOString(),
+      country: raceData.country,
+      circuitName: raceData.circuitName
     }
 
     if (this.isOnline) {
@@ -479,7 +738,12 @@ export class DataService {
             name: raceData.name,
             city: raceData.city,
             date: raceData.date,
-            is_completed: false
+            is_completed: false,
+            race_time: raceTime,
+            timezone: timezone,
+            race_datetime_utc: raceDatetimeUtc.toISOString(),
+            country: raceData.country,
+            circuit_name: raceData.circuitName
           })
           .select()
           .single()
@@ -487,6 +751,12 @@ export class DataService {
         if (error) throw error
 
         newRace.id = data.id
+        // Update with actual database values
+        newRace.raceTime = data.race_time
+        newRace.timezone = data.timezone
+        newRace.raceDatetimeUtc = data.race_datetime_utc
+        newRace.country = data.country
+        newRace.circuitName = data.circuit_name
       } catch (error) {
         console.error('Error creating race:', error)
         throw error
@@ -495,7 +765,14 @@ export class DataService {
       // Queue for sync
       this.offlineQueue.addAction({
         type: 'CREATE_RACE',
-        data: raceData
+        data: {
+          ...raceData,
+          race_time: raceTime,
+          timezone: timezone,
+          race_datetime_utc: raceDatetimeUtc.toISOString(),
+          country: raceData.country,
+          circuit_name: raceData.circuitName
+        }
       })
     }
 
@@ -505,6 +782,148 @@ export class DataService {
     setLocalData('races', localRaces)
 
     return newRace
+  }
+
+  async updateRace(raceId: string, updates: Partial<CreateRaceRequest>): Promise<Race> {
+    // Calculate new UTC time if time-related fields are being updated
+    let raceDatetimeUtc: Date | undefined
+    if (updates.date || updates.raceTime || updates.timezone) {
+      // Get current race data to fill in missing values
+      const currentRaces = await this.getRaces()
+      const currentRace = currentRaces.find(r => r.id === raceId)
+      if (!currentRace) {
+        throw new Error('Race not found')
+      }
+
+      const date = updates.date || currentRace.date
+      const raceTime = updates.raceTime || currentRace.raceTime || '15:00'
+      const timezone = updates.timezone || currentRace.timezone || 'UTC'
+      
+      raceDatetimeUtc = TimezoneHelpers.calculateUTCTime(date, raceTime, timezone)
+    }
+
+    if (this.isOnline) {
+      try {
+        const updateData: any = {}
+        if (updates.name) updateData.name = updates.name
+        if (updates.city) updateData.city = updates.city
+        if (updates.date) updateData.date = updates.date
+        if (updates.raceTime) updateData.race_time = updates.raceTime
+        if (updates.timezone) updateData.timezone = updates.timezone
+        if (updates.country) updateData.country = updates.country
+        if (updates.circuitName) updateData.circuit_name = updates.circuitName
+        if (raceDatetimeUtc) updateData.race_datetime_utc = raceDatetimeUtc.toISOString()
+
+        const { data, error } = await getSupabase()
+          .from('races')
+          .update(updateData)
+          .eq('id', raceId)
+          .select()
+          .single()
+
+        if (error) throw error
+
+        // Transform back to Race format
+        const updatedRace: Race = {
+          id: data.id,
+          name: data.name,
+          city: data.city,
+          date: data.date,
+          isCompleted: data.is_completed,
+          results: data.results,
+          predictions: {}, // Will be populated by getRaces
+          starWinners: data.star_winners,
+          raceTime: data.race_time,
+          timezone: data.timezone,
+          raceDatetimeUtc: data.race_datetime_utc,
+          country: data.country,
+          circuitName: data.circuit_name
+        }
+
+        return updatedRace
+      } catch (error) {
+        console.error('Error updating race:', error)
+        throw error
+      }
+    } else {
+      // Queue for sync
+      this.offlineQueue.addAction({
+        type: 'UPDATE_RACE',
+        data: { raceId, updates }
+      })
+
+      // Update local cache
+      const localRaces = getLocalData('races', [])
+      const raceIndex = localRaces.findIndex((r: Race) => r.id === raceId)
+      if (raceIndex !== -1) {
+        localRaces[raceIndex] = { 
+          ...localRaces[raceIndex], 
+          ...updates,
+          raceDatetimeUtc: raceDatetimeUtc?.toISOString()
+        }
+        setLocalData('races', localRaces)
+        return localRaces[raceIndex]
+      } else {
+        throw new Error('Race not found')
+      }
+    }
+  }
+
+  async getRaceWithTimezone(raceId: string): Promise<RaceWithTimezone> {
+    const races = await this.getRaces()
+    const race = races.find(r => r.id === raceId)
+    if (!race) {
+      throw new Error('Race not found')
+    }
+
+    // Add timezone preview if race has timezone data
+    let timezonePreview: { [timezone: string]: string } | undefined
+    if (race.raceDatetimeUtc) {
+      timezonePreview = TimezoneHelpers.previewTimesInZones(new Date(race.raceDatetimeUtc))
+    }
+
+    return {
+      ...race,
+      timezonePreview
+    }
+  }
+
+  // Validation method for race data
+  validateRaceData(raceData: CreateRaceRequest): string[] {
+    const errors: string[] = []
+
+    if (!raceData.name?.trim()) {
+      errors.push('Race name is required')
+    }
+
+    if (!raceData.city?.trim()) {
+      errors.push('City is required')
+    }
+
+    if (!raceData.date) {
+      errors.push('Date is required')
+    } else {
+      const raceDate = new Date(raceData.date)
+      if (isNaN(raceDate.getTime())) {
+        errors.push('Invalid date format')
+      }
+    }
+
+    if (raceData.raceTime) {
+      const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/
+      if (!timeRegex.test(raceData.raceTime)) {
+        errors.push('Invalid time format (use HH:MM)')
+      }
+    }
+
+    if (raceData.timezone) {
+      const validTimezones = TimezoneHelpers.getF1TimezoneOptions().map(tz => tz.value)
+      if (!validTimezones.includes(raceData.timezone)) {
+        errors.push('Invalid timezone')
+      }
+    }
+
+    return errors
   }
 
   async deleteRace(raceId: string): Promise<void> {

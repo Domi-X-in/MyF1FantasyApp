@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { Trophy, Car, BookOpen, Crown, Star, LogIn, LogOut, History, Wifi, WifiOff, X } from "lucide-react";
-import { dataService, User, Race, Positions } from "@/lib/dataService";
+import { dataService, User, Race, Positions, TimezoneHelpers } from "@/lib/dataService";
 import { useRouter } from "next/navigation";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { 
@@ -157,8 +157,14 @@ const DriverCarPair = ({ pair }: { pair: { driver: any; carImage: string } | nul
   );
 };
 
-// Countdown Clock Component
-const CountdownClock = ({ raceDate, onTimeExpired }: { raceDate: string; onTimeExpired?: (expired: boolean) => void }) => {
+// Enhanced Timezone-Aware Countdown Clock Component
+const CountdownClock = ({ 
+  race, 
+  onTimeExpired 
+}: { 
+  race: any; // Race object with timezone data
+  onTimeExpired?: (expired: boolean) => void 
+}) => {
   const [timeLeft, setTimeLeft] = useState<{
     days: number;
     hours: number;
@@ -167,9 +173,24 @@ const CountdownClock = ({ raceDate, onTimeExpired }: { raceDate: string; onTimeE
     isExpired: boolean;
   }>({ days: 0, hours: 0, minutes: 0, seconds: 0, isExpired: false });
 
+  const [raceTimeInfo, setRaceTimeInfo] = useState<{
+    localTime: string;
+    userTime: string;
+    cityName: string;
+  }>({ localTime: '', userTime: '', cityName: '' });
+
   useEffect(() => {
     const calculateTimeLeft = () => {
-      const raceDateTime = new Date(raceDate + 'T00:00:00').getTime(); // Set to start of race day
+      let raceDateTime: number;
+      
+      // Use timezone-aware calculation if available
+      if (race.raceDatetimeUtc) {
+        raceDateTime = new Date(race.raceDatetimeUtc).getTime();
+      } else {
+        // Fallback to legacy midnight logic for backward compatibility
+        raceDateTime = new Date(race.date + 'T00:00:00').getTime();
+      }
+
       const now = new Date().getTime();
       const difference = raceDateTime - now;
 
@@ -187,24 +208,63 @@ const CountdownClock = ({ raceDate, onTimeExpired }: { raceDate: string; onTimeE
       }
     };
 
+    // Calculate race time display info
+    const calculateRaceTimeInfo = () => {
+      if (race.raceDatetimeUtc && race.raceTime && race.timezone) {
+        const raceStartUTC = new Date(race.raceDatetimeUtc);
+        
+        // Local time in race city
+        const localTime = `${race.raceTime} ${race.timezone.split('/').pop()?.replace('_', ' ')}`;
+        
+        // User's local time
+        const userTime = raceStartUTC.toLocaleString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZoneName: 'short'
+        });
+
+        setRaceTimeInfo({
+          localTime,
+          userTime,
+          cityName: race.city
+        });
+      } else {
+        // Fallback for legacy races
+        setRaceTimeInfo({
+          localTime: 'Race Day',
+          userTime: new Date(race.date).toLocaleDateString(),
+          cityName: race.city
+        });
+      }
+    };
+
     // Calculate immediately
     calculateTimeLeft();
+    calculateRaceTimeInfo();
 
     // Update every second
     const timer = setInterval(calculateTimeLeft, 1000);
 
     return () => clearInterval(timer);
-  }, [raceDate]);
+  }, [race]);
 
   if (timeLeft.isExpired) {
     return (
       <div className="bg-red-100 border border-red-300 rounded-lg p-3 mb-4">
         <div className="flex items-center justify-center space-x-2">
-          <span className="text-red-600 font-bold">⏰</span>
-          <span className="text-red-700 font-semibold">Race Day!</span>
-          <span className="text-red-600 font-bold">⏰</span>
+          <span className="text-red-600 font-bold">🏁</span>
+          <span className="text-red-700 font-semibold">Race Started!</span>
+          <span className="text-red-600 font-bold">🏁</span>
         </div>
         <p className="text-red-600 text-sm text-center mt-1">Predictions are now locked</p>
+        {raceTimeInfo.localTime && (
+          <p className="text-red-500 text-xs text-center mt-1">
+            Started at {raceTimeInfo.localTime} in {raceTimeInfo.cityName}
+          </p>
+        )}
       </div>
     );
   }
@@ -212,8 +272,21 @@ const CountdownClock = ({ raceDate, onTimeExpired }: { raceDate: string; onTimeE
   return (
     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
       <div className="text-center mb-2">
-        <span className="text-blue-700 font-semibold">⏰ Time to Submit Predictions</span>
+        <span className="text-blue-700 font-semibold">⏰ Race Starts Soon</span>
       </div>
+      
+      {/* Race Time Information */}
+      {raceTimeInfo.localTime && (
+        <div className="text-center mb-3 bg-white rounded-lg p-2 border border-blue-200">
+          <div className="text-sm text-blue-800 font-medium">
+            🏁 {raceTimeInfo.localTime} in {raceTimeInfo.cityName}
+          </div>
+          <div className="text-xs text-blue-600 mt-1">
+            Your time: {raceTimeInfo.userTime}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-2 text-center">
         <div className="bg-white rounded-lg p-2 border border-blue-200">
           <div className="text-lg font-bold text-blue-600">{timeLeft.days}</div>
@@ -233,7 +306,7 @@ const CountdownClock = ({ raceDate, onTimeExpired }: { raceDate: string; onTimeE
         </div>
       </div>
       <p className="text-blue-600 text-xs text-center mt-2">
-        Submit your predictions before race day to participate!
+        Submit your predictions before the race starts!
       </p>
     </div>
   );
@@ -293,7 +366,15 @@ export default function F1FantasyAppWithSupabase() {
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [showAddRace, setShowAddRace] = useState(false);
   const [showAddResults, setShowAddResults] = useState(false);
-  const [newRace, setNewRace] = useState({ name: "", city: "", date: "" });
+  const [newRace, setNewRace] = useState({ 
+    name: "", 
+    city: "", 
+    date: "", 
+    raceTime: "",
+    timezone: "",
+    country: "",
+    circuitName: ""
+  });
   const [raceResults, setRaceResults] = useState<Positions>({ first: "", second: "", third: "" });
   const [selectedRaceForResults, setSelectedRaceForResults] = useState<string>("");
 
@@ -315,6 +396,25 @@ export default function F1FantasyAppWithSupabase() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedRaceId, setSelectedRaceId] = useState<string | null>(null);
   const [backfillPrediction, setBackfillPrediction] = useState<Positions>({ first: "", second: "", third: "" });
+  
+  // Phase 4: Race editing state variables
+  const [editingRaceId, setEditingRaceId] = useState<string | null>(null);
+  const [editRaceData, setEditRaceData] = useState({ 
+    name: "", 
+    city: "", 
+    date: "", 
+    raceTime: "",
+    timezone: "",
+    country: "",
+    circuitName: ""
+  });
+  const [showEditRaceModal, setShowEditRaceModal] = useState(false);
+  const [raceEditImpact, setRaceEditImpact] = useState<{
+    predictionsCount: number;
+    affectedUsers: string[];
+    timezoneDiff: string;
+    cutoffChange: string;
+  } | null>(null);
   
   // New state variables for unified Backfill UI
   const [currentOperation, setCurrentOperation] = useState<'add' | 'edit' | 'delete' | 'editing' | null>(null);
@@ -782,28 +882,61 @@ export default function F1FantasyAppWithSupabase() {
     }
   };
 
-  // Race management
+  // Enhanced Race management with timezone support
   const addNewRace = async () => {
-    if (newRace.name.trim() && newRace.city.trim() && newRace.date.trim()) {
-      try {
-        setIsLoading(true);
-        await dataService.instance.createRace({
-          name: newRace.name.trim(),
-          city: newRace.city.trim(),
-          date: newRace.date.trim()
-        });
-        
-        setNewRace({ name: "", city: "", date: "" });
-        setShowAddRace(false);
-        await loadData();
-      } catch (error) {
-        console.error('Error creating race:', error);
-        alert("Error creating race. Please try again.");
-      } finally {
-        setIsLoading(false);
+    // Basic validation
+    if (!newRace.name.trim() || !newRace.city.trim() || !newRace.date.trim()) {
+      alert("Please fill in the required fields: Race name, city, and date!");
+      return;
+    }
+
+    // Use smart defaults for timezone and race time if not provided
+    const timezone = newRace.timezone.trim() || TimezoneHelpers.getTimezoneForCity(newRace.city.trim());
+    const raceTime = newRace.raceTime.trim() || TimezoneHelpers.getTypicalRaceTime(timezone);
+
+    try {
+      setIsLoading(true);
+      
+      // Validate the enhanced race data
+      const raceData = {
+        name: newRace.name.trim(),
+        city: newRace.city.trim(),
+        date: newRace.date.trim(),
+        raceTime: raceTime,
+        timezone: timezone,
+        country: newRace.country.trim() || undefined,
+        circuitName: newRace.circuitName.trim() || undefined
+      };
+
+      // Validate using the enhanced validation
+      const validationErrors = dataService.instance.validateRaceData(raceData);
+      if (validationErrors.length > 0) {
+        alert(`Validation errors:\n${validationErrors.join('\n')}`);
+        return;
       }
-    } else {
-      alert("Please fill in all fields!");
+
+      await dataService.instance.createRace(raceData);
+      
+      // Reset form with all fields
+      setNewRace({ 
+        name: "", 
+        city: "", 
+        date: "", 
+        raceTime: "",
+        timezone: "",
+        country: "",
+        circuitName: ""
+      });
+      setShowAddRace(false);
+      await loadData();
+      
+      // Success message with timezone info
+      alert(`Race created successfully!\nRace time: ${raceTime} ${timezone.split('/').pop()?.replace('_', ' ')}`);
+    } catch (error) {
+      console.error('Error creating race:', error);
+      alert("Error creating race. Please try again.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -944,6 +1077,125 @@ export default function F1FantasyAppWithSupabase() {
         alert("Error deleting user. Please try again.");
       }
     }
+  };
+
+  // Phase 4: Race editing functions
+  const handleEditRace = async (race: any) => {
+    setEditingRaceId(race.id);
+    setEditRaceData({
+      name: race.name || "",
+      city: race.city || "",
+      date: race.date || "",
+      raceTime: race.raceTime || "",
+      timezone: race.timezone || "",
+      country: race.country || "",
+      circuitName: race.circuitName || ""
+    });
+    
+    // Analyze impact of potential changes
+    await analyzeRaceEditImpact(race);
+    setShowEditRaceModal(true);
+  };
+
+  const analyzeRaceEditImpact = async (race: any) => {
+    const predictionsCount = Object.keys(race.predictions || {}).length;
+    const affectedUsers = Object.keys(race.predictions || {}).map(userId => {
+      const user = users.find(u => u.id === userId);
+      return user ? user.username : userId;
+    });
+
+    // Calculate timezone difference if race has timezone data
+    let timezoneDiff = "";
+    let cutoffChange = "";
+    
+    if (race.timezone && race.raceTime && race.raceDatetimeUtc) {
+      const currentRaceTime = new Date(race.raceDatetimeUtc);
+      timezoneDiff = `Current: ${race.raceTime} ${race.timezone.split('/').pop()?.replace('_', ' ')}`;
+      cutoffChange = `Predictions close at: ${currentRaceTime.toLocaleString('en-US', {
+        weekday: 'short',
+        month: 'short', 
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZoneName: 'short'
+      })}`;
+    }
+
+    setRaceEditImpact({
+      predictionsCount,
+      affectedUsers,
+      timezoneDiff,
+      cutoffChange
+    });
+  };
+
+  const handleSaveRaceEdit = async () => {
+    if (!editingRaceId) return;
+
+    try {
+      setIsLoading(true);
+
+      // Use smart defaults for timezone and race time if not provided
+      const timezone = editRaceData.timezone.trim() || TimezoneHelpers.getTimezoneForCity(editRaceData.city.trim());
+      const raceTime = editRaceData.raceTime.trim() || TimezoneHelpers.getTypicalRaceTime(timezone);
+
+      // Validate the enhanced race data
+      const updates = {
+        name: editRaceData.name.trim(),
+        city: editRaceData.city.trim(),
+        date: editRaceData.date.trim(),
+        raceTime: raceTime,
+        timezone: timezone,
+        country: editRaceData.country.trim() || undefined,
+        circuitName: editRaceData.circuitName.trim() || undefined
+      };
+
+      // Validate using the enhanced validation
+      const validationErrors = dataService.instance.validateRaceData(updates);
+      if (validationErrors.length > 0) {
+        alert(`Validation errors:\n${validationErrors.join('\n')}`);
+        return;
+      }
+
+      // Show impact warning if there are predictions
+      if (raceEditImpact && raceEditImpact.predictionsCount > 0) {
+        const confirmMessage = `⚠️ RACE EDIT WARNING\n\nThis will affect ${raceEditImpact.predictionsCount} existing predictions from users:\n${raceEditImpact.affectedUsers.join(', ')}\n\nChanges:\n- Race time: ${updates.raceTime} ${timezone.split('/').pop()?.replace('_', ' ')}\n- Timezone: ${timezone}\n\nDo you want to continue?`;
+        
+        if (!confirm(confirmMessage)) {
+          return;
+        }
+      }
+
+      // Update the race
+      await dataService.instance.updateRace(editingRaceId, updates);
+      
+      // Close modal and reload data
+      handleCancelRaceEdit();
+      await loadData();
+      
+      // Success message with timezone info
+      alert(`Race updated successfully!\nNew race time: ${raceTime} ${timezone.split('/').pop()?.replace('_', ' ')}\nAffected predictions: ${raceEditImpact?.predictionsCount || 0}`);
+    } catch (error) {
+      console.error('Error updating race:', error);
+      alert("Error updating race. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCancelRaceEdit = () => {
+    setEditingRaceId(null);
+    setEditRaceData({ 
+      name: "", 
+      city: "", 
+      date: "", 
+      raceTime: "",
+      timezone: "",
+      country: "",
+      circuitName: ""
+    });
+    setShowEditRaceModal(false);
+    setRaceEditImpact(null);
   };
 
   // Helper functions for unified Backfill UI
@@ -2016,9 +2268,9 @@ export default function F1FantasyAppWithSupabase() {
                               {upcomingRace.city} • {formatDate(upcomingRace.date)}
                             </p>
                             
-                            {/* Countdown Clock */}
+                            {/* Enhanced Timezone-Aware Countdown Clock */}
                             <CountdownClock 
-                              raceDate={upcomingRace.date} 
+                              race={upcomingRace} 
                               onTimeExpired={setIsPredictionTimeExpired}
                             />
 
@@ -2985,36 +3237,201 @@ export default function F1FantasyAppWithSupabase() {
                     {adminTab === 'addRace' && (
                       <Card className="bg-white border border-gray-200 shadow-sm">
                         <CardContent className="p-6 space-y-4">
-                          <h3 className="text-lg font-semibold text-gray-900 mb-2">Add New Race</h3>
+                          <h3 className="text-lg font-semibold text-gray-900 mb-2">🏁 Add New Race (Enhanced with Timezone Support)</h3>
+                          
+                          {/* Smart Preview */}
+                          {newRace.city && (
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
+                              <div className="font-medium text-blue-800">📍 Smart Suggestions for {newRace.city}:</div>
+                              <div className="text-blue-700 mt-1">
+                                Timezone: {TimezoneHelpers.getTimezoneForCity(newRace.city)} • 
+                                Typical Start: {TimezoneHelpers.getTypicalRaceTime(TimezoneHelpers.getTimezoneForCity(newRace.city))}
+                              </div>
+                              {newRace.date && newRace.raceTime && newRace.timezone && (
+                                <div className="text-blue-600 mt-2 text-xs">
+                                  ⏰ UTC Time: {TimezoneHelpers.calculateUTCTime(newRace.date, newRace.raceTime || '15:00', newRace.timezone || TimezoneHelpers.getTimezoneForCity(newRace.city)).toISOString()}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           <form className="space-y-3" onSubmit={e => { e.preventDefault(); addNewRace(); }}>
-                            <Input value={newRace.name} onChange={e => setNewRace(prev => ({ ...prev, name: e.target.value }))} placeholder="Race Name (e.g., Austrian Grand Prix)" />
-                            <Input value={newRace.city} onChange={e => setNewRace(prev => ({ ...prev, city: e.target.value }))} placeholder="City" />
-                            <Input type="date" value={newRace.date} onChange={e => setNewRace(prev => ({ ...prev, date: e.target.value }))} />
+                            {/* Required Fields */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <Input 
+                                value={newRace.name} 
+                                onChange={e => setNewRace(prev => ({ ...prev, name: e.target.value }))} 
+                                placeholder="Race Name (e.g., Monaco Grand Prix)" 
+                                className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                                required
+                              />
+                              <Input 
+                                value={newRace.city} 
+                                onChange={e => {
+                                  const city = e.target.value;
+                                  setNewRace(prev => ({ 
+                                    ...prev, 
+                                    city,
+                                    // Auto-suggest timezone and race time when city changes
+                                    timezone: prev.timezone || TimezoneHelpers.getTimezoneForCity(city),
+                                    raceTime: prev.raceTime || TimezoneHelpers.getTypicalRaceTime(TimezoneHelpers.getTimezoneForCity(city))
+                                  }));
+                                }} 
+                                placeholder="City (e.g., Monaco)" 
+                                className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                                required
+                              />
+                            </div>
+
+                            <Input 
+                              type="date" 
+                              value={newRace.date} 
+                              onChange={e => setNewRace(prev => ({ ...prev, date: e.target.value }))} 
+                              className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                              required
+                            />
+
+                            {/* Timezone & Time Fields */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Race Time (Local)</label>
+                                <Input 
+                                  type="time" 
+                                  value={newRace.raceTime} 
+                                  onChange={e => setNewRace(prev => ({ ...prev, raceTime: e.target.value }))} 
+                                  placeholder="15:00"
+                                  className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
+                                <select 
+                                  value={newRace.timezone} 
+                                  onChange={e => setNewRace(prev => ({ ...prev, timezone: e.target.value }))}
+                                  className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600"
+                                >
+                                  <option value="">Auto-detect from city</option>
+                                  {TimezoneHelpers.getF1TimezoneOptions().map(tz => (
+                                    <option key={tz.value} value={tz.value}>
+                                      {tz.label} ({tz.offset})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            {/* Optional Fields */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <Input 
+                                value={newRace.country} 
+                                onChange={e => setNewRace(prev => ({ ...prev, country: e.target.value }))} 
+                                placeholder="Country (e.g., Monaco)" 
+                                className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                              />
+                              <Input 
+                                value={newRace.circuitName} 
+                                onChange={e => setNewRace(prev => ({ ...prev, circuitName: e.target.value }))} 
+                                placeholder="Circuit Name (e.g., Circuit de Monaco)" 
+                                className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                              />
+                            </div>
+
                             <div className="flex gap-2">
-                              <Button type="submit" className="flex-1 bg-[#E10800] text-white hover:bg-red-800 font-medium">Add Race</Button>
+                              <Button type="submit" className="flex-1 bg-[#E10800] text-white hover:bg-red-800 font-medium">
+                                🏁 Add Race with Timezone Support
+                              </Button>
                             </div>
                           </form>
-                          {/* Races List */}
+                          {/* Enhanced Races List */}
                           <div className="mt-6">
-                            <h4 className="text-md font-semibold text-gray-800 mb-2">All Races</h4>
+                            <h4 className="text-md font-semibold text-gray-800 mb-2">🏁 All Races (Enhanced with Timezone Info)</h4>
                             <div className="overflow-x-auto">
                               <table className="min-w-full text-xs border">
                                 <thead>
                                   <tr className="bg-gray-100">
                                     <th className="px-2 py-1 text-left">Name</th>
-                                    <th className="px-2 py-1 text-left">City</th>
-                                    <th className="px-2 py-1 text-left">Date</th>
+                                    <th className="px-2 py-1 text-left">Location</th>
+                                    <th className="px-2 py-1 text-left">Date & Time</th>
+                                    <th className="px-2 py-1 text-left">Timezone</th>
+                                    <th className="px-2 py-1 text-left">Status</th>
                                     <th className="px-2 py-1 text-left">Actions</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {races.map(race => (
                                     <tr key={race.id} className="border-b">
-                                      <td className="px-2 py-1">{race.name}</td>
-                                      <td className="px-2 py-1">{race.city}</td>
-                                      <td className="px-2 py-1">{formatDate(race.date)}</td>
                                       <td className="px-2 py-1">
-                                        <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white font-medium" onClick={() => handleDeleteRace(race.id)}>Delete</Button>
+                                        <div className="font-medium">{race.name}</div>
+                                        {race.circuitName && (
+                                          <div className="text-gray-500 text-xs">{race.circuitName}</div>
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1">
+                                        <div>{race.city}</div>
+                                        {race.country && (
+                                          <div className="text-gray-500 text-xs">{race.country}</div>
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1">
+                                        <div>{formatDate(race.date)}</div>
+                                        {race.raceTime && (
+                                          <div className="text-blue-600 text-xs">{race.raceTime} local</div>
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1">
+                                        {race.timezone ? (
+                                          <div className="text-xs">
+                                            <div className="text-blue-700">{race.timezone.split('/').pop()?.replace('_', ' ')}</div>
+                                            {race.raceDatetimeUtc && (
+                                              <div className="text-gray-500">
+                                                UTC: {new Date(race.raceDatetimeUtc).toLocaleString('en-US', {
+                                                  month: 'short',
+                                                  day: 'numeric',
+                                                  hour: '2-digit',
+                                                  minute: '2-digit'
+                                                })}
+                                              </div>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <span className="text-gray-400 text-xs">Legacy</span>
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1">
+                                        <div className="flex flex-col gap-1">
+                                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                            race.isCompleted 
+                                              ? 'bg-green-100 text-green-800' 
+                                              : TimezoneHelpers.isPredictionAllowed(race)
+                                                ? 'bg-blue-100 text-blue-800'
+                                                : 'bg-yellow-100 text-yellow-800'
+                                          }`}>
+                                            {race.isCompleted ? '✅ Done' : TimezoneHelpers.isPredictionAllowed(race) ? '🔓 Open' : '🔒 Locked'}
+                                          </span>
+                                          {Object.keys(race.predictions || {}).length > 0 && (
+                                            <span className="text-gray-600 text-xs">
+                                              {Object.keys(race.predictions).length} predictions
+                                            </span>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="px-2 py-1">
+                                        <div className="flex gap-2">
+                                          <Button 
+                                            size="sm" 
+                                            className="bg-blue-600 hover:bg-blue-700 text-white font-medium" 
+                                            onClick={() => handleEditRace(race)}
+                                          >
+                                            Edit
+                                          </Button>
+                                          <Button 
+                                            size="sm" 
+                                            className="bg-red-600 hover:bg-red-700 text-white font-medium" 
+                                            onClick={() => handleDeleteRace(race.id)}
+                                          >
+                                            Delete
+                                          </Button>
+                                        </div>
                                       </td>
                                     </tr>
                                   ))}
@@ -3386,6 +3803,198 @@ export default function F1FantasyAppWithSupabase() {
                               Cancel
                             </Button>
                           </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Phase 4: Edit Race Modal */}
+                    {showEditRaceModal && (
+                      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                        <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                          <h3 className="text-xl font-semibold text-gray-900 mb-4">✏️ Edit Race</h3>
+                          
+                          {/* Impact Analysis Section */}
+                          {raceEditImpact && (
+                            <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                              <div className="font-semibold text-yellow-800 mb-2">⚠️ Impact Analysis</div>
+                              <div className="text-sm text-yellow-700 space-y-1">
+                                <div><strong>Predictions affected:</strong> {raceEditImpact.predictionsCount}</div>
+                                {raceEditImpact.predictionsCount > 0 && (
+                                  <div><strong>Affected users:</strong> {raceEditImpact.affectedUsers.join(', ')}</div>
+                                )}
+                                {raceEditImpact.timezoneDiff && (
+                                  <div><strong>Current race time:</strong> {raceEditImpact.timezoneDiff}</div>
+                                )}
+                                {raceEditImpact.cutoffChange && (
+                                  <div><strong>Current cutoff:</strong> {raceEditImpact.cutoffChange}</div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                          
+                          <form onSubmit={e => { e.preventDefault(); handleSaveRaceEdit(); }} className="space-y-4">
+                            {/* Required Fields */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  Race Name <span className="text-red-500">*</span>
+                                </label>
+                                <Input
+                                  value={editRaceData.name}
+                                  onChange={e => setEditRaceData(prev => ({ ...prev, name: e.target.value }))}
+                                  placeholder="Monaco Grand Prix"
+                                  className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                                />
+                              </div>
+                              
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  City <span className="text-red-500">*</span>
+                                </label>
+                                <Input
+                                  value={editRaceData.city}
+                                  onChange={e => {
+                                    const city = e.target.value;
+                                    setEditRaceData(prev => ({ 
+                                      ...prev, 
+                                      city,
+                                      timezone: prev.timezone || TimezoneHelpers.getTimezoneForCity(city),
+                                      raceTime: prev.raceTime || TimezoneHelpers.getTypicalRaceTime(TimezoneHelpers.getTimezoneForCity(city))
+                                    }));
+                                  }}
+                                  placeholder="Monaco"
+                                  className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  Date <span className="text-red-500">*</span>
+                                </label>
+                                <Input
+                                  type="date"
+                                  value={editRaceData.date}
+                                  onChange={e => setEditRaceData(prev => ({ ...prev, date: e.target.value }))}
+                                  className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                                />
+                              </div>
+                              
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  Race Time <span className="text-red-500">*</span>
+                                </label>
+                                <Input
+                                  type="time"
+                                  value={editRaceData.raceTime}
+                                  onChange={e => setEditRaceData(prev => ({ ...prev, raceTime: e.target.value }))}
+                                  placeholder="15:00"
+                                  className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                                />
+                              </div>
+                              
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  Timezone <span className="text-red-500">*</span>
+                                </label>
+                                <select
+                                  value={editRaceData.timezone}
+                                  onChange={e => setEditRaceData(prev => ({ 
+                                    ...prev, 
+                                    timezone: e.target.value,
+                                    raceTime: prev.raceTime || TimezoneHelpers.getTypicalRaceTime(e.target.value)
+                                  }))}
+                                  className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600"
+                                >
+                                  <option value="">Select timezone</option>
+                                  {TimezoneHelpers.getF1TimezoneOptions().map((option) => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            {/* Optional Fields */}
+                            <div className="border-t pt-4">
+                              <h4 className="text-sm font-medium text-gray-700 mb-2">Optional Information</h4>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-600 mb-1">Country</label>
+                                  <Input
+                                    value={editRaceData.country}
+                                    onChange={e => setEditRaceData(prev => ({ ...prev, country: e.target.value }))}
+                                    placeholder="Monaco"
+                                    className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                                  />
+                                </div>
+                                
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-600 mb-1">Circuit Name</label>
+                                  <Input
+                                    value={editRaceData.circuitName}
+                                    onChange={e => setEditRaceData(prev => ({ ...prev, circuitName: e.target.value }))}
+                                    placeholder="Circuit de Monaco"
+                                    className="text-gray-900 bg-white border-gray-300 focus:border-red-600 focus:ring-red-600"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Timezone Preview */}
+                            {editRaceData.date && editRaceData.raceTime && editRaceData.timezone && (
+                              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                <div className="text-sm font-medium text-blue-800 mb-1">🕐 Timezone Preview</div>
+                                <div className="text-sm text-blue-700">
+                                                                     {(() => {
+                                     try {
+                                       const raceTime = TimezoneHelpers.calculateUTCTime(
+                                         editRaceData.date, 
+                                         editRaceData.raceTime, 
+                                         editRaceData.timezone
+                                       );
+                                       const offset = '+00:00'; // Placeholder for timezone offset
+                                      
+                                      return (
+                                        <div className="space-y-1">
+                                          <div><strong>Race time:</strong> {editRaceData.raceTime} {editRaceData.timezone.split('/').pop()?.replace('_', ' ')} ({offset})</div>
+                                          <div><strong>UTC time:</strong> {raceTime.toISOString()}</div>
+                                          <div><strong>Your time:</strong> {raceTime.toLocaleString()}</div>
+                                        </div>
+                                      );
+                                    } catch (error) {
+                                      return <div className="text-red-600">Invalid timezone/time combination</div>;
+                                    }
+                                  })()}
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="flex gap-3 pt-4">
+                              <Button 
+                                type="submit" 
+                                className="flex-1 bg-[#E10800] text-white hover:bg-red-800 font-medium"
+                                disabled={isLoading}
+                              >
+                                {isLoading ? (
+                                  <>
+                                    <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></span>
+                                    Saving...
+                                  </>
+                                ) : (
+                                  'Save Changes'
+                                )}
+                              </Button>
+                              <Button 
+                                type="button"
+                                onClick={handleCancelRaceEdit}
+                                variant="outline"
+                                className="flex-1 border-gray-300 text-gray-700 hover:bg-gray-50"
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </form>
                         </div>
                       </div>
                     )}
