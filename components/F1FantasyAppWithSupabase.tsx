@@ -416,6 +416,9 @@ export default function F1FantasyAppWithSupabase() {
     cutoffChange: string;
   } | null>(null);
   
+  // Current time state for real-time updates
+  const [currentTime, setCurrentTime] = useState(new Date());
+  
   // New state variables for unified Backfill UI
   const [currentOperation, setCurrentOperation] = useState<'add' | 'edit' | 'delete' | 'editing' | null>(null);
   const [predictionToDelete, setPredictionToDelete] = useState<{ userId: string; raceId: string; prediction: Positions; userName: string; raceName: string } | null>(null);
@@ -584,6 +587,17 @@ export default function F1FantasyAppWithSupabase() {
     setupOnlineOfflineListeners();
     setupRealTimeSync();
   }, []);
+  
+  // Update current time every second when edit modal is open
+  useEffect(() => {
+    if (!showEditRaceModal) return;
+    
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, [showEditRaceModal]);
 
   const setupOnlineOfflineListeners = () => {
     if (typeof window !== 'undefined') {
@@ -614,12 +628,29 @@ export default function F1FantasyAppWithSupabase() {
       console.log('Users loaded:', usersData.length);
       console.log('Races loaded:', racesData.length);
       
-      // Auto-complete races that have passed their date
+      // Auto-complete races that have passed their start time (timezone-aware)
       const now = new Date();
       const updatedRaces = racesData.map((race: Race) => {
-        if (!race.isCompleted && new Date(race.date) <= now) {
-          console.log(`Auto-marking race ${race.name} as completed (date: ${race.date})`);
-          return { ...race, isCompleted: true };
+        if (!race.isCompleted) {
+          let shouldAutoComplete = false;
+          
+          if (race.raceDatetimeUtc) {
+            // Use timezone-aware logic for races with timezone data
+            shouldAutoComplete = new Date(race.raceDatetimeUtc) <= now;
+            if (shouldAutoComplete) {
+              console.log(`Auto-marking race ${race.name} as completed (race start time: ${race.raceDatetimeUtc})`);
+            }
+          } else {
+            // Fallback to legacy logic for races without timezone data
+            shouldAutoComplete = new Date(race.date) <= now;
+            if (shouldAutoComplete) {
+              console.log(`Auto-marking race ${race.name} as completed (legacy date: ${race.date})`);
+            }
+          }
+          
+          if (shouldAutoComplete) {
+            return { ...race, isCompleted: true };
+          }
         }
         return race;
       });
@@ -833,15 +864,51 @@ export default function F1FantasyAppWithSupabase() {
   const getUpcomingRace = () => {
     const now = new Date();
     return races
-      .filter(race => new Date(race.date) > now && !race.isCompleted)
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
+      .filter(race => {
+        // Use timezone-aware logic if available, fallback to legacy date logic
+        if (race.raceDatetimeUtc) {
+          // Race is upcoming if it hasn't started yet OR if it has started but no results yet
+          const raceHasStarted = new Date(race.raceDatetimeUtc) <= now;
+          const hasResults = race.results && Object.keys(race.results).length > 0;
+          
+          // Race is "upcoming" if: not completed AND (hasn't started OR has started but no results)
+          return !race.isCompleted && (!raceHasStarted || (raceHasStarted && !hasResults));
+        } else {
+          // Fallback to legacy logic for races without timezone data
+          const raceDate = new Date(race.date + 'T00:00:00');
+          const raceHasStarted = raceDate <= now;
+          const hasResults = race.results && Object.keys(race.results).length > 0;
+          
+          return !race.isCompleted && (!raceHasStarted || (raceHasStarted && !hasResults));
+        }
+      })
+      .sort((a, b) => {
+        // Sort by actual race start time if available, otherwise by date
+        if (a.raceDatetimeUtc && b.raceDatetimeUtc) {
+          return new Date(a.raceDatetimeUtc).getTime() - new Date(b.raceDatetimeUtc).getTime();
+        } else {
+          return new Date(a.date).getTime() - new Date(b.date).getTime();
+        }
+      })[0];
   };
 
   const getCompletedRaces = () => {
     const now = new Date();
-    return races.filter(race => 
-      race.isCompleted || new Date(race.date) <= now
-    );
+    return races.filter(race => {
+      // Use timezone-aware logic if available, fallback to legacy date logic
+      if (race.raceDatetimeUtc) {
+        // Race is completed if it has results OR (race start time has passed AND race is marked as completed)
+        const raceHasStarted = new Date(race.raceDatetimeUtc) <= now;
+        const hasResults = race.results && Object.keys(race.results).length > 0;
+        return hasResults || (race.isCompleted && raceHasStarted);
+      } else {
+        // Fallback to legacy logic for races without timezone data
+        const raceDate = new Date(race.date + 'T00:00:00');
+        const raceHasStarted = raceDate <= now;
+        const hasResults = race.results && Object.keys(race.results).length > 0;
+        return hasResults || (race.isCompleted && raceHasStarted);
+      }
+    });
   };
 
   const getCurrentUserPrediction = () => {
@@ -849,6 +916,26 @@ export default function F1FantasyAppWithSupabase() {
     const upcomingRace = getUpcomingRace();
     if (!upcomingRace) return null;
     return upcomingRace.predictions[currentUser.id] || null;
+  };
+
+  // New helper function to determine prediction lock status
+  const getPredictionLockStatus = (race: any) => {
+    const now = new Date();
+    const hasResults = race.results && Object.keys(race.results).length > 0;
+    
+    if (hasResults) {
+      return 'results_available';
+    }
+    
+    if (race.raceDatetimeUtc) {
+      const raceHasStarted = new Date(race.raceDatetimeUtc) <= now;
+      return raceHasStarted ? 'locked_no_results' : 'open';
+    } else {
+      // Fallback to legacy logic
+      const raceDate = new Date(race.date + 'T00:00:00');
+      const raceHasStarted = raceDate <= now;
+      return raceHasStarted ? 'locked_no_results' : 'open';
+    }
   };
 
   const handlePick = (driverCode: string) => {
@@ -2274,68 +2361,119 @@ export default function F1FantasyAppWithSupabase() {
                               onTimeExpired={setIsPredictionTimeExpired}
                             />
 
-                            {/* Warning when predictions are locked */}
-                            {isPredictionTimeExpired && (
-                              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
-                                <div className="flex items-center space-x-2">
-                                  <span className="text-red-600">⚠️</span>
-                                  <span className="text-red-700 font-semibold">Predictions are now locked!</span>
-                                </div>
-                                <p className="text-red-600 text-sm mt-1">
-                                  The race is starting soon. You can no longer submit or edit predictions.
-                                </p>
-                              </div>
-                            )}
+                            {/* Enhanced prediction status messaging */}
+                            {(() => {
+                              const lockStatus = getPredictionLockStatus(upcomingRace);
+                              
+                              if (lockStatus === 'locked_no_results') {
+                                return (
+                                  <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4">
+                                    <div className="flex items-center space-x-2">
+                                      <span className="text-orange-600">🏁</span>
+                                      <span className="text-orange-700 font-semibold">Race in Progress!</span>
+                                      <span className="text-orange-600">🏁</span>
+                                    </div>
+                                    <p className="text-orange-600 text-sm mt-1">
+                                      Your prediction is locked. Results will be available once the race finishes and results are submitted.
+                                    </p>
+                                  </div>
+                                );
+                              } else if (lockStatus === 'results_available') {
+                                return (
+                                  <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
+                                    <div className="flex items-center space-x-2">
+                                      <span className="text-green-600">✅</span>
+                                      <span className="text-green-700 font-semibold">Results Available!</span>
+                                      <span className="text-green-600">✅</span>
+                                    </div>
+                                    <p className="text-green-600 text-sm mt-1">
+                                      Race results have been submitted. Check your prediction accuracy below.
+                                    </p>
+                                  </div>
+                                );
+                              } else if (isPredictionTimeExpired) {
+                                return (
+                                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                                    <div className="flex items-center space-x-2">
+                                      <span className="text-red-600">⚠️</span>
+                                      <span className="text-red-700 font-semibold">Predictions are now locked!</span>
+                                    </div>
+                                    <p className="text-red-600 text-sm mt-1">
+                                      The race is starting soon. You can no longer submit or edit predictions.
+                                    </p>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
 
                             {hasStoredPrediction && !isInEditMode ? (
                               <div className="space-y-3">
-                                <div className="flex justify-between items-center">
-                                  <h4 className="font-semibold text-green-600">Your Prediction:</h4>
-                                  <Button 
-                                    variant="outline" 
-                                    size="sm" 
-                                    onClick={() => {
-                                      setCurrentPrediction(storedPrediction);
-                                      setIsEditingPrediction(true);
-                                    }}
-                                    disabled={isPredictionTimeExpired}
-                                    className={`border-red-600 text-red-600 hover:bg-red-50 ${isPredictionTimeExpired ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                  >
-                                    {isPredictionTimeExpired ? "Predictions Locked" : "Edit Prediction"}
-                                  </Button>
-                                </div>
-                                <div className="grid grid-cols-3 gap-3">
-                                  {Object.entries(storedPrediction).map(([pos, code]) => {
-                                    const positionLabels = { first: "1st 🥇", second: "2nd 🥈", third: "3rd 🥉" };
-                                    const driver = drivers.find(d => d.code === code);
-                                    return (
-                                      <div key={pos} className="text-center">
-                                        <div className="text-xs text-gray-500 mb-1">
-                                          {positionLabels[pos as keyof typeof positionLabels]}
-                                        </div>
-                                        <div className="bg-gray-100 rounded-lg p-3 border border-gray-200">
-                                          <div className="w-12 h-12 mx-auto mb-2 rounded-full overflow-hidden border-2 border-gray-300 flex items-center justify-center bg-white">
-                                            {driver?.img ? (
-                                              <img 
-                                                src={driver.img} 
-                                                alt={driver.name}
-                                                className="w-full h-full object-cover object-top"
-                                                onError={(e) => {
-                                                  const target = e.target as HTMLImageElement;
-                                                  target.style.display = 'none';
-                                                  target.nextElementSibling?.classList.remove('hidden');
-                                                }}
-                                              />
-                                            ) : null}
-                                            <span className={`text-sm font-bold text-gray-900 ${driver?.img ? 'hidden' : ''}`}>{code}</span>
-                                          </div>
-                                          <div className="text-sm font-bold text-gray-900">{code}</div>
-                                          <div className="text-xs text-gray-600">{driver?.name || code}</div>
-                                        </div>
+                                {(() => {
+                                  const lockStatus = getPredictionLockStatus(upcomingRace);
+                                  const isLocked = lockStatus === 'locked_no_results' || isPredictionTimeExpired;
+                                  const hasResults = lockStatus === 'results_available';
+                                  
+                                  return (
+                                    <>
+                                      <div className="flex justify-between items-center">
+                                        <h4 className={`font-semibold ${hasResults ? 'text-green-600' : 'text-gray-900'}`}>
+                                          {hasResults ? 'Your Prediction vs Results:' : 'Your Prediction:'}
+                                        </h4>
+                                        {!isLocked && (
+                                          <Button 
+                                            variant="outline" 
+                                            size="sm" 
+                                            onClick={() => {
+                                              setCurrentPrediction(storedPrediction);
+                                              setIsEditingPrediction(true);
+                                            }}
+                                            className="border-red-600 text-red-600 hover:bg-red-50"
+                                          >
+                                            Edit Prediction
+                                          </Button>
+                                        )}
+                                        {isLocked && (
+                                          <span className="text-sm text-gray-500 font-medium">
+                                            {lockStatus === 'locked_no_results' ? '🔒 Locked (Race in Progress)' : '🔒 Predictions Locked'}
+                                          </span>
+                                                                                )}
                                       </div>
-                                    );
-                                  })}
-                                </div>
+                                      <div className="grid grid-cols-3 gap-3">
+                                        {Object.entries(storedPrediction).map(([pos, code]) => {
+                                          const positionLabels = { first: "1st 🥇", second: "2nd 🥈", third: "3rd 🥉" };
+                                          const driver = drivers.find(d => d.code === code);
+                                          return (
+                                            <div key={pos} className="text-center">
+                                              <div className="text-xs text-gray-500 mb-1">
+                                                {positionLabels[pos as keyof typeof positionLabels]}
+                                              </div>
+                                              <div className="bg-gray-100 rounded-lg p-3 border border-gray-200">
+                                                <div className="w-12 h-12 mx-auto mb-2 rounded-full overflow-hidden border-2 border-gray-300 flex items-center justify-center bg-white">
+                                                  {driver?.img ? (
+                                                    <img 
+                                                      src={driver.img} 
+                                                      alt={driver.name}
+                                                      className="w-full h-full object-cover object-top"
+                                                      onError={(e) => {
+                                                        const target = e.target as HTMLImageElement;
+                                                        target.style.display = 'none';
+                                                        target.nextElementSibling?.classList.remove('hidden');
+                                                      }}
+                                                    />
+                                                  ) : null}
+                                                  <span className={`text-sm font-bold text-gray-900 ${driver?.img ? 'hidden' : ''}`}>{code}</span>
+                                                </div>
+                                                <div className="text-sm font-bold text-gray-900">{code}</div>
+                                                <div className="text-xs text-gray-600">{driver?.name || code}</div>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </>
+                                  );
+                                })()}
                               </div>
                             ) : (
                               <div className="space-y-4">
@@ -2357,7 +2495,11 @@ export default function F1FantasyAppWithSupabase() {
                                     </Button>
                                   )}
                                 </div>
-                                <div className={`grid grid-cols-1 gap-3 max-h-60 overflow-y-auto ${isPredictionTimeExpired ? 'pointer-events-none opacity-50' : ''}`}>
+                                <div className={`grid grid-cols-1 gap-3 max-h-60 overflow-y-auto ${(() => {
+                                  const lockStatus = getPredictionLockStatus(upcomingRace);
+                                  const isLocked = lockStatus === 'locked_no_results' || isPredictionTimeExpired;
+                                  return isLocked ? 'pointer-events-none opacity-50' : '';
+                                })()}`}>
                                   {drivers.map((driver) => {
                                     // Check if driver is selected and get their position
                                     const isSelected = currentPrediction && (
@@ -2374,21 +2516,30 @@ export default function F1FantasyAppWithSupabase() {
                                     return (
                                       <div
                                         key={driver.code}
-                                        className={`flex items-center space-x-3 p-3 rounded-lg transition-all border ${
-                                          isPredictionTimeExpired 
-                                            ? "border-gray-300 bg-gray-100 cursor-not-allowed"
-                                            : isSelected
-                                            ? "border-red-600 bg-red-50 cursor-pointer"
-                                            : "border-gray-200 hover:border-gray-300 cursor-pointer"
-                                        }`}
+                                        className={`flex items-center space-x-3 p-3 rounded-lg transition-all border ${(() => {
+                                          const lockStatus = getPredictionLockStatus(upcomingRace);
+                                          const isLocked = lockStatus === 'locked_no_results' || isPredictionTimeExpired;
+                                          
+                                          if (isLocked) {
+                                            return "border-gray-300 bg-gray-100 cursor-not-allowed";
+                                          } else if (isSelected) {
+                                            return "border-red-600 bg-red-50 cursor-pointer";
+                                          } else {
+                                            return "border-gray-200 hover:border-gray-300 cursor-pointer";
+                                          }
+                                        })()}`}
                                         onClick={(e) => {
-                                          if (isPredictionTimeExpired) return;
+                                          const lockStatus = getPredictionLockStatus(upcomingRace);
+                                          const isLocked = lockStatus === 'locked_no_results' || isPredictionTimeExpired;
+                                          if (isLocked) return;
                                           e.preventDefault();
                                           e.stopPropagation();
                                           handlePick(driver.code);
                                         }}
                                         onMouseDown={(e) => {
-                                          if (isPredictionTimeExpired) return;
+                                          const lockStatus = getPredictionLockStatus(upcomingRace);
+                                          const isLocked = lockStatus === 'locked_no_results' || isPredictionTimeExpired;
+                                          if (isLocked) return;
                                           e.preventDefault();
                                         }}
                                       >
@@ -2421,10 +2572,21 @@ export default function F1FantasyAppWithSupabase() {
                                 <div className="flex gap-2">
                                   <Button 
                                     onClick={submitPrediction}
-                                    disabled={!currentPrediction || !currentPrediction.first || !currentPrediction.second || !currentPrediction.third || isPredictionTimeExpired}
+                                    disabled={(() => {
+                                      const lockStatus = getPredictionLockStatus(upcomingRace);
+                                      const isLocked = lockStatus === 'locked_no_results' || isPredictionTimeExpired;
+                                      return !currentPrediction || !currentPrediction.first || !currentPrediction.second || !currentPrediction.third || isLocked;
+                                    })()}
                                     className="flex-1 bg-red-600 hover:bg-red-700 text-white disabled:bg-gray-300 disabled:text-gray-500"
                                   >
-                                    {isPredictionTimeExpired ? "Predictions Locked" : (isEditingPrediction ? "Update Prediction" : "Submit Prediction")}
+                                    {(() => {
+                                      const lockStatus = getPredictionLockStatus(upcomingRace);
+                                      const isLocked = lockStatus === 'locked_no_results' || isPredictionTimeExpired;
+                                      if (isLocked) {
+                                        return lockStatus === 'locked_no_results' ? "Race in Progress" : "Predictions Locked";
+                                      }
+                                      return isEditingPrediction ? "Update Prediction" : "Submit Prediction";
+                                    })()}
                                   </Button>
                                   {isEditingPrediction && (
                                     <Button 
@@ -3402,11 +3564,27 @@ export default function F1FantasyAppWithSupabase() {
                                           <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
                                             race.isCompleted 
                                               ? 'bg-green-100 text-green-800' 
-                                              : TimezoneHelpers.isPredictionAllowed(race)
-                                                ? 'bg-blue-100 text-blue-800'
-                                                : 'bg-yellow-100 text-yellow-800'
+                                              : (() => {
+                                                  // Use timezone-aware logic if available, fallback to legacy logic
+                                                  if (race.raceDatetimeUtc) {
+                                                    return new Date(race.raceDatetimeUtc) > new Date() 
+                                                      ? 'bg-blue-100 text-blue-800' 
+                                                      : 'bg-yellow-100 text-yellow-800';
+                                                  } else {
+                                                    return TimezoneHelpers.isPredictionAllowed(race)
+                                                      ? 'bg-blue-100 text-blue-800'
+                                                      : 'bg-yellow-100 text-yellow-800';
+                                                  }
+                                                })()
                                           }`}>
-                                            {race.isCompleted ? '✅ Done' : TimezoneHelpers.isPredictionAllowed(race) ? '🔓 Open' : '🔒 Locked'}
+                                            {race.isCompleted ? '✅ Done' : (() => {
+                                              // Use timezone-aware logic if available, fallback to legacy logic
+                                              if (race.raceDatetimeUtc) {
+                                                return new Date(race.raceDatetimeUtc) > new Date() ? '🔓 Open' : '🔒 Locked';
+                                              } else {
+                                                return TimezoneHelpers.isPredictionAllowed(race) ? '🔓 Open' : '🔒 Locked';
+                                              }
+                                            })()}
                                           </span>
                                           {Object.keys(race.predictions || {}).length > 0 && (
                                             <span className="text-gray-600 text-xs">
@@ -3492,7 +3670,14 @@ export default function F1FantasyAppWithSupabase() {
                           <form className="space-y-3" onSubmit={e => { e.preventDefault(); addRaceResults(); }}>
                             <select value={selectedRaceForResults} onChange={e => setSelectedRaceForResults(e.target.value)} className="w-full p-2 rounded border border-gray-300 bg-white text-gray-900 text-sm focus:border-red-600 focus:ring-red-600">
                               <option value="">Select a race</option>
-                              {races.filter(r => new Date(r.date) <= new Date() && !r.results).map(race => (
+                              {races.filter(r => {
+                                // Use timezone-aware logic if available, fallback to legacy date logic
+                                if (r.raceDatetimeUtc) {
+                                  return new Date(r.raceDatetimeUtc) <= new Date() && !r.results;
+                                } else {
+                                  return new Date(r.date) <= new Date() && !r.results;
+                                }
+                              }).map(race => (
                                 <option key={race.id} value={race.id}>{race.name} - {formatDate(race.date)}</option>
                               ))}
                             </select>
@@ -3812,6 +3997,48 @@ export default function F1FantasyAppWithSupabase() {
                       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                         <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
                           <h3 className="text-xl font-semibold text-gray-900 mb-4">✏️ Edit Race</h3>
+                          
+                          {/* Current Time Display */}
+                          <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                            <div className="text-sm font-medium text-gray-800 mb-2">🕐 Current Time</div>
+                            <div className="text-sm text-gray-700 space-y-1">
+                              {(() => {
+                                const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                                const userOffset = currentTime.getTimezoneOffset();
+                                const userOffsetHours = Math.abs(userOffset) / 60;
+                                const userOffsetSign = userOffset <= 0 ? '+' : '-';
+                                const userOffsetString = `${userOffsetSign}${Math.floor(userOffsetHours).toString().padStart(2, '0')}:${(userOffsetHours % 1 * 60).toString().padStart(2, '0')}`;
+                                
+                                const formatTime = (date: Date, timezone?: string) => {
+                                  const options: Intl.DateTimeFormatOptions = {
+                                    weekday: 'short',
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                    hour12: false
+                                  };
+                                  
+                                  if (timezone) {
+                                    options.timeZone = timezone;
+                                  }
+                                  
+                                  return date.toLocaleString('en-US', options);
+                                };
+                                
+                                return (
+                                  <div className="space-y-1">
+                                    <div><strong>Your time ({userTimezone}):</strong> {formatTime(currentTime)} GMT{userOffsetString}</div>
+                                    {editRaceData.timezone && (
+                                      <div><strong>Race timezone ({editRaceData.timezone.split('/').pop()?.replace('_', ' ')}):</strong> {formatTime(currentTime, editRaceData.timezone)}</div>
+                                    )}
+                                    <div><strong>UTC time:</strong> {formatTime(currentTime, 'UTC')} UTC</div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </div>
                           
                           {/* Impact Analysis Section */}
                           {raceEditImpact && (

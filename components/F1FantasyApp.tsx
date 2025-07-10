@@ -592,11 +592,27 @@ export default function F1FantasyApp() {
   };
 
   const getUpcomingRace = () => {
-    return races.find(race => !race.isCompleted);
+    const now = new Date();
+    return races
+      .filter(race => {
+        const raceDate = new Date(race.date + 'T00:00:00');
+        const raceHasStarted = raceDate <= now;
+        const hasResults = race.results && Object.keys(race.results).length > 0;
+        
+        // Race is "upcoming" if: not completed AND (hasn't started OR has started but no results)
+        return !race.isCompleted && (!raceHasStarted || (raceHasStarted && !hasResults));
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
   };
 
   const getCompletedRaces = () => {
-    return races.filter(race => race.isCompleted);
+    const now = new Date();
+    return races.filter(race => {
+      const raceDate = new Date(race.date + 'T00:00:00');
+      const raceHasStarted = raceDate <= now;
+      const hasResults = race.results && Object.keys(race.results).length > 0;
+      return hasResults || (race.isCompleted && raceHasStarted);
+    });
   };
 
   // User management
@@ -797,6 +813,20 @@ export default function F1FantasyApp() {
     const upcomingRace = getUpcomingRace();
     if (!upcomingRace || !currentUser) return null;
     return upcomingRace.predictions[currentUser];
+  };
+
+  // Helper function to determine prediction lock status
+  const getPredictionLockStatus = (race: Race) => {
+    const now = new Date();
+    const hasResults = race.results && Object.keys(race.results).length > 0;
+    
+    if (hasResults) {
+      return 'results_available';
+    }
+    
+    const raceDate = new Date(race.date + 'T00:00:00');
+    const raceHasStarted = raceDate <= now;
+    return raceHasStarted ? 'locked_no_results' : 'open';
   };
 
   // New helper functions for history
