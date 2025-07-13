@@ -160,7 +160,7 @@ export class TimezoneHelpers {
     'austin': 'America/Chicago',
     'mexico city': 'America/Mexico_City',
     'sao paulo': 'America/Sao_Paulo',
-    'las vegas': 'America/Las_Vegas',
+    'las vegas': 'America/Los_Angeles',
     'singapore': 'Asia/Singapore',
     'baku': 'Asia/Baku',
     'manama': 'Asia/Bahrain',
@@ -191,7 +191,6 @@ export class TimezoneHelpers {
     'Europe/Amsterdam': 2,
     'America/Mexico_City': -5,
     'America/Sao_Paulo': -3,
-    'America/Las_Vegas': -8,
     'Asia/Singapore': 8,
     'Asia/Baku': 4,
     'Asia/Dubai': 4,
@@ -219,7 +218,7 @@ export class TimezoneHelpers {
       { value: 'Europe/Madrid', label: 'Spain (CET)', offset: '+02:00' },
       { value: 'America/New_York', label: 'USA East (EDT)', offset: '-04:00' },
       { value: 'America/Chicago', label: 'USA Central (CDT)', offset: '-05:00' },
-      { value: 'America/Las_Vegas', label: 'Las Vegas (PDT)', offset: '-08:00' },
+      { value: 'America/Los_Angeles', label: 'Las Vegas (PDT)', offset: '-07:00' },
       { value: 'America/Mexico_City', label: 'Mexico (CDT)', offset: '-05:00' },
       { value: 'America/Sao_Paulo', label: 'Brazil (BRT)', offset: '-03:00' },
       { value: 'America/Toronto', label: 'Canada (EDT)', offset: '-04:00' },
@@ -329,7 +328,7 @@ export class TimezoneHelpers {
       return '20:00'
     }
     // Late night race
-    if (timezone === 'America/Las_Vegas') {
+    if (timezone === 'America/Los_Angeles') {
       return '22:00'
     }
     // Early races for European TV
