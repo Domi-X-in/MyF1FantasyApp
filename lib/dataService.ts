@@ -20,12 +20,20 @@ export interface User {
   racesParticipated: number
 }
 
+// Race status enum
+export enum RaceStatus {
+  UPCOMING = 'UPCOMING',      // Predictions open. Race has not started.
+  IN_PROGRESS = 'IN_PROGRESS', // Race has started. Predictions locked but still visible.
+  COMPLETED = 'COMPLETED',     // Admin has submitted results. Show results and scores.
+  CANCELLED = 'CANCELLED'      // Reserved for future use.
+}
+
 export interface Race {
   id: string
   name: string
   city: string
   date: string
-  isCompleted: boolean
+  raceStatus: RaceStatus      // NEW: Replace isCompleted with raceStatus
   results?: {
     first: string
     second: string
@@ -33,7 +41,7 @@ export interface Race {
   }
   predictions: { [userId: string]: { first: string; second: string; third: string } }
   starWinners?: string[]
-  // New timezone-aware fields
+  // Timezone-aware fields
   raceTime?: string        // Local race time (e.g., "15:00")
   timezone?: string        // IANA timezone (e.g., "Europe/Monaco")
   raceDatetimeUtc?: string // UTC timestamp for consistent comparison
@@ -46,6 +54,7 @@ export interface CreateRaceRequest {
   name: string
   city: string
   date: string
+  raceStatus?: RaceStatus
   raceTime?: string
   timezone?: string
   country?: string
@@ -228,11 +237,89 @@ export class TimezoneHelpers {
     return this.CITY_TIMEZONE_MAP[city.toLowerCase()] || 'UTC'
   }
 
-  // Calculate UTC datetime from local race time
+  // Calculate UTC datetime from local race time using dynamic timezone conversion
   static calculateUTCTime(date: string, time: string, timezone: string): Date {
-    const localDateTime = new Date(`${date}T${time}:00`)
-    const offset = this.TIMEZONE_OFFSETS[timezone] || 0
-    return new Date(localDateTime.getTime() - (offset * 60 * 60 * 1000))
+    try {
+      // For UTC timezone, return the date as-is
+      if (timezone === 'UTC') {
+        return new Date(`${date}T${time}`);
+      }
+      
+      // Use a simpler approach: create the date in the target timezone
+      // and then convert to UTC by subtracting the offset
+      const localDateTime = new Date(`${date}T${time}`);
+      
+      // Get the timezone offset for the target timezone at the specific date
+      const targetOffset = this.getTimezoneOffsetAtDate(timezone, localDateTime);
+      
+      // Calculate UTC time by subtracting the timezone offset
+      const utcTime = new Date(localDateTime.getTime() - (targetOffset * 60 * 60 * 1000));
+      
+      // Validate the result
+      if (isNaN(utcTime.getTime())) {
+        throw new Error(`Invalid UTC time calculation for ${timezone}`);
+      }
+      
+      return utcTime;
+    } catch (error) {
+      console.error('Error calculating UTC time:', error);
+      // Fallback to static offset method
+      const localDateTime = new Date(`${date}T${time}`);
+      const offset = this.TIMEZONE_OFFSETS[timezone] || 0;
+      const fallbackTime = new Date(localDateTime.getTime() - (offset * 60 * 60 * 1000));
+      
+      // Validate fallback result
+      if (isNaN(fallbackTime.getTime())) {
+        throw new Error(`Fallback UTC calculation also failed for ${timezone}`);
+      }
+      
+      return fallbackTime;
+    }
+  }
+
+  // Get the timezone offset for a specific timezone at a specific date (handles DST)
+  static getTimezoneOffsetAtDate(timezone: string, date: Date): number {
+    try {
+      // For UTC, return 0 immediately
+      if (timezone === 'UTC') {
+        return 0;
+      }
+      
+      // Use a simpler and more reliable method
+      // Create a date in the target timezone
+      const targetDate = new Date(date.toLocaleString('en-US', { timeZone: timezone }));
+      
+      // Create a date in UTC
+      const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
+      
+      // Calculate the difference in hours
+      const diffMs = targetDate.getTime() - utcDate.getTime();
+      const diffHours = diffMs / (1000 * 60 * 60);
+      
+      // Validate the result
+      if (isNaN(diffHours)) {
+        throw new Error(`Invalid offset calculation for ${timezone}`);
+      }
+      
+      return diffHours;
+    } catch (error) {
+      console.error(`Error getting timezone offset for ${timezone}:`, error);
+      // Fallback to static offset
+      return this.TIMEZONE_OFFSETS[timezone] || 0;
+    }
+  }
+
+  // Get the current timezone offset for a timezone (handles DST)
+  static getCurrentTimezoneOffset(timezone: string): number {
+    return this.getTimezoneOffsetAtDate(timezone, new Date());
+  }
+
+  // Get timezone offset string (e.g., "+02:00", "-05:00") for a specific date
+  static getTimezoneOffsetString(timezone: string, date: Date): string {
+    const offset = this.getTimezoneOffsetAtDate(timezone, date);
+    const sign = offset >= 0 ? '+' : '-';
+    const hours = Math.abs(offset).toString().padStart(2, '0');
+    return `${sign}${hours}:00`;
   }
 
   // Get typical race start time for a region
@@ -281,16 +368,8 @@ export class TimezoneHelpers {
 
   // Check if prediction is still allowed based on race start time
   static isPredictionAllowed(race: Race): boolean {
-    const now = new Date()
-    
-    // Use timezone-aware calculation if available
-    if (race.raceDatetimeUtc) {
-      return now < new Date(race.raceDatetimeUtc)
-    }
-    
-    // Fallback to legacy midnight logic
-    const raceDate = new Date(race.date + 'T00:00:00')
-    return now < raceDate
+    // Predictions are only allowed for UPCOMING races
+    return race.raceStatus === RaceStatus.UPCOMING
   }
 
   // Get time until race start
@@ -338,6 +417,121 @@ export class TimezoneHelpers {
       minutes,
       seconds,
       isExpired: false
+    }
+  }
+
+  // Single Source of Truth: Calculate race time preview for any component
+  static calculateRaceTimePreview(date: string, time: string, timezone: string): {
+    raceTime: string
+    utcTime: string
+    userTime: string
+    offset: string
+    error?: string
+  } | null {
+    try {
+      if (!date || !time || !timezone) {
+        throw new Error('Missing required parameters: date, time, or timezone');
+      }
+      
+      // Check if timezone is supported (including UTC)
+      if (!(timezone in this.TIMEZONE_OFFSETS)) {
+        throw new Error(`Unsupported timezone: ${timezone}`);
+      }
+      
+      // Calculate UTC time using dynamic timezone conversion
+      const raceDatetimeUtc = this.calculateUTCTime(date, time, timezone);
+      
+      // Validate the calculated UTC time
+      if (isNaN(raceDatetimeUtc.getTime())) {
+        throw new Error(`Invalid UTC time calculation for ${timezone}`);
+      }
+      
+      const raceStartUTC = new Date(raceDatetimeUtc);
+      const localDate = new Date(`${date}T${time}`);
+      
+      // Validate local date
+      if (isNaN(localDate.getTime())) {
+        throw new Error(`Invalid local date calculation for ${date} ${time}`);
+      }
+      
+      // Get offset strings
+      const raceOffsetString = this.getTimezoneOffsetString(timezone, localDate);
+      const utcOffsetString = '+00:00';
+      
+      // Format Race time (in race city timezone)
+      const raceTimeFormatted = localDate.toLocaleString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        timeZone: timezone
+      });
+      
+      // Validate formatted race time
+      if (raceTimeFormatted === 'Invalid Date') {
+        throw new Error(`Invalid race time formatting for ${timezone}`);
+      }
+      
+      // Format UTC time
+      const utcTimeFormatted = raceStartUTC.toLocaleString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        timeZone: 'UTC',
+        timeZoneName: 'short'
+      });
+      
+      // Validate formatted UTC time
+      if (utcTimeFormatted === 'Invalid Date') {
+        throw new Error(`Invalid UTC time formatting`);
+      }
+      
+      // Format User time (in user's local timezone)
+      const userTimeFormatted = raceStartUTC.toLocaleString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        timeZoneName: 'short'
+      });
+      
+      // Validate formatted user time
+      if (userTimeFormatted === 'Invalid Date') {
+        throw new Error(`Invalid user time formatting`);
+      }
+      
+      // Compose display strings
+      const raceCity = timezone.split('/').pop()?.replace('_', ' ') || timezone;
+      const raceTime = `${raceTimeFormatted} ${raceCity}`;
+      const utcTime = `${utcTimeFormatted} (${utcOffsetString})`;
+      
+      // For user time, extract the offset from the formatted string if possible
+      const userTzMatch = userTimeFormatted.match(/GMT[+-]\d+/) || userTimeFormatted.match(/UTC[+-]\d+/);
+      const userTz = userTzMatch ? userTzMatch[0] : '';
+      const userTime = `${userTimeFormatted.replace(/ GMT[+-]\d+| UTC[+-]\d+/, '')}${userTz ? ' ' + userTz : ''}`;
+      
+      return {
+        raceTime,
+        utcTime,
+        userTime,
+        offset: raceOffsetString
+      };
+    } catch (error) {
+      console.error(`Error in calculateRaceTimePreview:`, error);
+      return {
+        raceTime: '',
+        utcTime: '',
+        userTime: '',
+        offset: '',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
     }
   }
 }
@@ -649,16 +843,25 @@ export class DataService {
               }
             })
 
+          // Map database race_status to RaceStatus enum
+          let raceStatus: RaceStatus
+          if (race.race_status) {
+            raceStatus = race.race_status as RaceStatus
+          } else {
+            // Fallback for legacy races: map is_completed to raceStatus
+            raceStatus = race.is_completed ? RaceStatus.COMPLETED : RaceStatus.UPCOMING
+          }
+
           return {
             id: race.id,
             name: race.name,
             city: race.city,
             date: race.date,
-            isCompleted: race.is_completed,
+            raceStatus: raceStatus,
             results: race.results,
             predictions: racePredictions,
             starWinners: race.star_winners,
-            // New timezone-aware fields
+            // Timezone-aware fields
             raceTime: race.race_time,
             timezone: race.timezone,
             raceDatetimeUtc: race.race_datetime_utc,
@@ -669,12 +872,12 @@ export class DataService {
 
         console.log('DataService: Races from database:', races.length);
         
-        // Auto-complete races that have passed their date
+        // Auto-update race status based on time (legacy logic - will be replaced by database triggers)
         const now = new Date();
         const updatedRaces = races.map((race: Race) => {
-          if (!race.isCompleted && new Date(race.date) <= now) {
-            console.log(`DataService: Auto-marking race ${race.name} as completed (date: ${race.date})`);
-            return { ...race, isCompleted: true };
+          if (race.raceStatus === RaceStatus.UPCOMING && race.raceDatetimeUtc && new Date(race.raceDatetimeUtc) <= now) {
+            console.log(`DataService: Auto-marking race ${race.name} as IN_PROGRESS (time: ${race.raceDatetimeUtc})`);
+            return { ...race, raceStatus: RaceStatus.IN_PROGRESS };
           }
           return race;
         });
@@ -693,12 +896,12 @@ export class DataService {
       const localRaces = getLocalData('races', [])
       console.log('DataService: Using local races (offline):', localRaces.length);
       
-      // Auto-complete races that have passed their date (offline mode)
+      // Auto-update race status based on time (offline mode)
       const now = new Date();
       const updatedLocalRaces = localRaces.map((race: Race) => {
-        if (!race.isCompleted && new Date(race.date) <= now) {
-          console.log(`DataService: Auto-marking race ${race.name} as completed (offline mode, date: ${race.date})`);
-          return { ...race, isCompleted: true };
+        if (race.raceStatus === RaceStatus.UPCOMING && race.raceDatetimeUtc && new Date(race.raceDatetimeUtc) <= now) {
+          console.log(`DataService: Auto-marking race ${race.name} as IN_PROGRESS (offline mode, time: ${race.raceDatetimeUtc})`);
+          return { ...race, raceStatus: RaceStatus.IN_PROGRESS };
         }
         return race;
       });
@@ -720,9 +923,9 @@ export class DataService {
       name: raceData.name,
       city: raceData.city,
       date: raceData.date,
-      isCompleted: false,
+      raceStatus: RaceStatus.UPCOMING,
       predictions: {},
-      // New timezone-aware fields
+      // Timezone-aware fields
       raceTime,
       timezone,
       raceDatetimeUtc: raceDatetimeUtc.toISOString(),
@@ -808,6 +1011,7 @@ export class DataService {
         if (updates.name) updateData.name = updates.name
         if (updates.city) updateData.city = updates.city
         if (updates.date) updateData.date = updates.date
+        if (updates.raceStatus) updateData.race_status = updates.raceStatus
         if (updates.raceTime) updateData.race_time = updates.raceTime
         if (updates.timezone) updateData.timezone = updates.timezone
         if (updates.country) updateData.country = updates.country
@@ -829,7 +1033,7 @@ export class DataService {
           name: data.name,
           city: data.city,
           date: data.date,
-          isCompleted: data.is_completed,
+          raceStatus: data.race_status as RaceStatus || RaceStatus.UPCOMING,
           results: data.results,
           predictions: {}, // Will be populated by getRaces
           starWinners: data.star_winners,
@@ -977,7 +1181,7 @@ export class DataService {
           .from('races')
           .update({
             results,
-            is_completed: true
+            race_status: 'COMPLETED'
           })
           .eq('id', raceId)
         if (raceError) throw raceError;
@@ -1056,7 +1260,7 @@ export class DataService {
       // Queue for sync
       this.offlineQueue.addAction({
         type: 'UPDATE_RACE',
-        data: { raceId, results, starWinners, isCompleted: true }
+        data: { raceId, results, starWinners, raceStatus: 'COMPLETED' }
       })
     }
 
@@ -1066,7 +1270,7 @@ export class DataService {
     if (raceIndex !== -1) {
       localRaces[raceIndex].results = results
       localRaces[raceIndex].starWinners = starWinners
-      localRaces[raceIndex].isCompleted = true
+      localRaces[raceIndex].raceStatus = RaceStatus.COMPLETED
       setLocalData('races', localRaces)
     }
   }
@@ -1079,7 +1283,7 @@ export class DataService {
           .update({
             results: null,
             star_winners: [],
-            is_completed: false
+            race_status: 'UPCOMING'
           })
           .eq('id', raceId)
 
@@ -1092,7 +1296,7 @@ export class DataService {
       // Queue for sync
       this.offlineQueue.addAction({
         type: 'UPDATE_RACE',
-        data: { raceId, results: null, starWinners: [], isCompleted: false }
+        data: { raceId, results: null, starWinners: [], raceStatus: 'UPCOMING' }
       })
     }
 
@@ -1102,7 +1306,7 @@ export class DataService {
     if (raceIndex !== -1) {
       localRaces[raceIndex].results = undefined
       localRaces[raceIndex].starWinners = undefined
-      localRaces[raceIndex].isCompleted = false
+      localRaces[raceIndex].raceStatus = RaceStatus.UPCOMING
       setLocalData('races', localRaces)
     }
   }
@@ -1120,7 +1324,7 @@ export class DataService {
               name: race.name,
               city: race.city,
               date: race.date,
-              is_completed: race.isCompleted,
+              race_status: race.raceStatus,
               results: race.results,
               star_winners: race.starWinners || []
             })
@@ -1147,7 +1351,7 @@ export class DataService {
             name: race.name,
             city: race.city,
             date: race.date,
-            isCompleted: race.isCompleted,
+            raceStatus: race.raceStatus,
             results: race.results,
             starWinners: race.starWinners
           }
@@ -1257,10 +1461,10 @@ export class DataService {
             await this.deleteRace(action.data.raceId)
             break
           case 'UPDATE_RACE':
-            if (action.data.isCompleted === false) {
+            if (action.data.raceStatus === 'UPCOMING' && !action.data.results) {
               // This is a remove results action
               await this.removeRaceResults(action.data.raceId)
-            } else {
+            } else if (action.data.raceStatus === 'COMPLETED') {
               // This is a normal update results action
               await this.updateRaceResults(action.data.raceId, action.data.results, action.data.starWinners)
             }
